@@ -7,12 +7,14 @@ Silicon (docs/builder_pack/06_model_hardware/HARDWARE_PROFILER_REQUIREMENTS.md).
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import subprocess
 
 from heimdal.ids import now_iso
+from heimdal.models.base import select_generative_model
 from heimdal.models.ollama import OllamaBackend
 
 
@@ -137,10 +139,7 @@ def deployment_mode(gpu_count: int) -> str:
 
 
 def detect_ollama(config) -> dict:
-    backend = OllamaBackend(
-        base_url=config.ollama.get("base_url", "http://localhost:11434"),
-        timeout=config.ollama.get("timeout_seconds", 120),
-    )
+    backend = OllamaBackend.from_config(config)
     reachable = backend.is_available()
     return {
         "base_url": backend.base_url,
@@ -162,39 +161,54 @@ def quick_profile(config) -> dict:
     }
 
 
-def capability_tests(config, ollama: dict) -> list[dict]:
-    """Light model capability smoke tests; skipped when Ollama is unavailable."""
+def capability_tests(config, ollama: dict, model_override: str | None = None) -> list[dict]:
+    """Light model capability smoke tests; skipped when Ollama is unavailable.
+
+    Tests a *generative* model: a manifest worker/verifier candidate when one
+    is installed, otherwise the first installed non-embedding model. Embedding
+    models (e.g. nomic-embed-text) would falsely fail a generation test.
+    """
     tests: list[dict] = []
     if not ollama.get("reachable") or not ollama.get("models"):
         return tests
-    backend = OllamaBackend(
-        base_url=config.ollama.get("base_url", "http://localhost:11434"),
-        timeout=config.ollama.get("timeout_seconds", 120),
-    )
-    model = ollama["models"][0]
+
+    model = model_override or select_generative_model(config, ollama["models"])
+    if model is None:
+        return [
+            {
+                "name": "model_selection",
+                "model": None,
+                "passed": False,
+                "error": "No text-generation model installed; only embedding models found.",
+            }
+        ]
+
+    backend = OllamaBackend.from_config(config)
     try:
-        gen = backend.generate(
-            "Reply with the single word: OK", model=model, max_tokens=8
-        )
+        gen = backend.generate("Reply with the single word: OK", model=model, max_tokens=8)
         tests.append(
             {"name": "basic_generation", "model": model, "passed": bool(gen.text.strip())}
         )
     except (RuntimeError, OSError) as exc:
-        tests.append({"name": "basic_generation", "model": model, "passed": False, "error": str(exc)})
+        tests.append(
+            {"name": "basic_generation", "model": model, "passed": False, "error": str(exc)}
+        )
     try:
         gen = backend.generate(
             'Return JSON: {"ok": true}', model=model, json_mode=True, max_tokens=32
         )
-        import json as _json
-
-        _json.loads(gen.text)
+        json.loads(gen.text)
         tests.append({"name": "json_output", "model": model, "passed": True})
     except (RuntimeError, OSError, ValueError) as exc:
-        tests.append({"name": "json_output", "model": model, "passed": False, "error": str(exc)})
+        tests.append(
+            {"name": "json_output", "model": model, "passed": False, "error": str(exc)}
+        )
     return tests
 
 
-def full_profile(config, run_capability_tests: bool = True) -> dict:
+def full_profile(
+    config, run_capability_tests: bool = True, capability_model: str | None = None
+) -> dict:
     """Full hardware + model profile written by ``heimdal doctor``."""
     os_info = detect_os()
     gpus = detect_gpus()
@@ -223,5 +237,5 @@ def full_profile(config, run_capability_tests: bool = True) -> dict:
     if gpus["count"] == 0:
         profile["warnings"].append("No GPU detected; running in CPU/Dev mode.")
     if run_capability_tests:
-        profile["capability_tests"] = capability_tests(config, ollama)
+        profile["capability_tests"] = capability_tests(config, ollama, capability_model)
     return profile

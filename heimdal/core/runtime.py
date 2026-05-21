@@ -42,11 +42,17 @@ def _seed_storage(storage: Storage) -> None:
 class Runtime:
     """The Heimdal Core Runtime."""
 
-    def __init__(self, config: Config | None = None, prefer_backend: str | None = None):
+    def __init__(
+        self,
+        config: Config | None = None,
+        prefer_backend: str | None = None,
+        model_override: str | None = None,
+    ):
         self.config = config or load_config()
         self.storage = Storage(self.config.storage_root).ensure()
         _seed_storage(self.storage)
         self.backend = select_backend(self.config, prefer=prefer_backend)
+        self.model_override = model_override
         self.scheduler = Scheduler(self.config)
         # Hardware does not change during a session; profile once and reuse.
         self.hardware_profile = quick_profile(self.config)
@@ -79,10 +85,18 @@ class Runtime:
         trace.event("role_resolved", role_id=role["role_id"])
 
         outcome = quality_factory.run_quality_factory(
-            contract, role, validated, self.backend, self.storage, self.config, trace
+            contract,
+            role,
+            validated,
+            self.backend,
+            self.storage,
+            self.config,
+            trace,
+            model_override=self.model_override,
         )
 
         run_id = new_id("run")
+        routing = outcome["routing"]
         artifacts = self._persist_artifacts(run_id, contract, outcome)
         duration_ms = round((time.time() - started) * 1000, 2)
         metrics = {
@@ -90,16 +104,22 @@ class Runtime:
             "repair_iterations": outcome["repair_iterations"],
             "verification_score": outcome["verification"]["score"],
             "backend": self.backend.name,
-            "quality_level": outcome["routing"]["quality_level"],
+            "quality_level": routing["quality_level"],
+            "worker_model": routing["worker_model"],
+            "verifier_backend": routing["verifier_backend"],
+            "verifier_model": routing["verifier_model"],
         }
 
         repro = repro_trace.build_repro_pack(
             models=outcome["models_used"],
             params={
-                "quality_level": outcome["routing"]["quality_level"],
-                "verifier_strictness": outcome["routing"]["verifier_strictness"],
-                "samples": outcome["routing"]["samples"],
-                "max_repair_iterations": outcome["routing"]["max_repair_iterations"],
+                "quality_level": routing["quality_level"],
+                "verifier_strictness": routing["verifier_strictness"],
+                "verifier_backend": routing["verifier_backend"],
+                "verifier_model": routing["verifier_model"],
+                "worker_model": routing["worker_model"],
+                "samples": routing["samples"],
+                "max_repair_iterations": routing["max_repair_iterations"],
             },
             hashes={
                 "contract": sha256_obj(contract),

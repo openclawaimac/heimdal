@@ -6,6 +6,8 @@ runtime:
 ollama:
   base_url: ${OLLAMA_HOST:-http://localhost:11434}
   timeout_seconds: 120
+  max_retries: 2
+  retry_backoff_seconds: 1.0
 model_profiles:
   verifier:
     candidates: [qwen3:4b, qwen2.5:3b, gemma3:4b]
@@ -28,5 +30,11 @@ budgets:
   max_repair_iterations: 2
   max_input_tokens: 8000
   max_output_tokens: 2000
+verifier:
+  # Rule-based verification always runs. When semantic verification is enabled,
+  # a model-based semantic check runs first for tasks at or above the minimum
+  # budget, then the rule-based checks run on top.
+  semantic_enabled: false
+  semantic_min_budget: B2
 sandbox:
   policy_file: config/sandbox_policy.yml

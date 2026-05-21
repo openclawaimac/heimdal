@@ -26,7 +26,7 @@ pipeline runnable.
 ## CLI
 
 ```bash
-heimdal doctor [--json]                       # profile hardware + model backend
+heimdal doctor [--json] [--model <name>]      # profile hardware + model backend
 heimdal run demo                              # run the built-in demo task
 heimdal run --input examples/tasks/simple_task.json
 heimdal run --instruction "Explain what a queue is."
@@ -36,6 +36,19 @@ heimdal logs latest                           # inspect the most recent run
 ```
 
 Without an install, use `python -m heimdal <command>`.
+
+### Backend and model selection
+
+`run` and `eval` accept `--backend ollama|offline` and `--model <name>` to force
+a backend or override the worker model. `doctor --model <name>` picks the model
+for capability tests. When no override is given, Heimdal prefers an installed
+manifest candidate and skips embedding models; if no candidate is installed it
+falls back to an installed generative model or fails with an actionable
+`ollama pull` hint.
+
+Verification is rule-based by default. An optional model-based **semantic
+verifier** can be enabled in `config/heimdal.manifest.yml` (`verifier.semantic_enabled`)
+for B2-B4 tasks; rule-based checks always run as well.
 
 ## How a task flows
 

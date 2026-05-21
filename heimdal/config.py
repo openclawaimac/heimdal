@@ -72,6 +72,10 @@ class Config:
         return self.manifest.get("budgets", {})
 
     @property
+    def verifier(self) -> dict:
+        return self.manifest.get("verifier", {})
+
+    @property
     def privacy_mode(self) -> str:
         return self.runtime.get("privacy_mode", "local_only")
 

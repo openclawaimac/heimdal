@@ -15,7 +15,7 @@ import json
 import re
 
 from heimdal import jsonschema_min
-from heimdal.core.constants import FAIL, LENIENT, PASS, STANDARD, STRICT
+from heimdal.core.constants import FAIL, HYBRID, LENIENT, PASS, STANDARD, STRICT
 from heimdal.core.task_contract import requires_grounding
 
 _SEVERITY_PENALTY = {"low": 0.05, "medium": 0.15, "high": 0.35, "critical": 0.6}
@@ -23,6 +23,13 @@ _PASS_THRESHOLD = {LENIENT: 0.5, STANDARD: 0.65, STRICT: 0.8}
 
 # Heuristic markers of factual claims that need a source.
 _NUMBER_CLAIM = re.compile(r"(?<![\w])(?:\$|€|£)?\d[\d,]*(?:\.\d+)?\s*(?:%|usd|dollars)?", re.I)
+
+_SEMANTIC_SYSTEM = (
+    "You are a strict answer verifier. Decide whether the RESPONSE genuinely "
+    "fulfils the TASK. A response that asks a question back, is empty, or "
+    "ignores the task does NOT fulfil it. "
+    'Return only JSON: {"satisfies": true|false, "reason": "<short reason>"}.'
+)
 
 
 def _defect(severity: str, message: str, fix: str | None = None) -> dict:
@@ -32,8 +39,42 @@ def _defect(severity: str, message: str, fix: str | None = None) -> dict:
     return defect
 
 
-def verify(output_text: str, contract: dict, packet: dict, routing: dict, config) -> dict:
-    """Return a schema-valid Verification Result for a worker draft."""
+def _semantic_defect(output_text: str, contract: dict, routing: dict, backend) -> dict | None:
+    """Run the model-based semantic check; returns a defect or None.
+
+    A failure to reach the model is non-fatal: rule-based checks still run.
+    """
+    prompt = f"TASK:\n{contract.get('objective', '')}\n\nRESPONSE:\n{output_text}\n"
+    try:
+        gen = backend.generate(
+            prompt,
+            model=routing["verifier_model"],
+            system=_SEMANTIC_SYSTEM,
+            json_mode=True,
+            max_tokens=200,
+            temperature=0.0,
+        )
+        judgment = json.loads(gen.text)
+    except (RuntimeError, OSError, ValueError, json.JSONDecodeError):
+        return None
+    if isinstance(judgment, dict) and judgment.get("satisfies") is False:
+        reason = str(judgment.get("reason", "response does not satisfy the task"))
+        return _defect(
+            "high",
+            f"Semantic verifier: {reason}",
+            "Answer the task directly and completely.",
+        )
+    return None
+
+
+def verify(
+    output_text: str, contract: dict, packet: dict, routing: dict, config, backend=None
+) -> dict:
+    """Return a schema-valid Verification Result for a worker draft.
+
+    When the router selected the hybrid verifier, a model-based semantic check
+    runs first; the deterministic rule-based checks always run afterwards.
+    """
     verification = contract.get("verification", {})
     constraints = contract.get("constraints", {}) or {}
     strictness = routing.get("verifier_strictness", STANDARD)
@@ -45,6 +86,11 @@ def verify(output_text: str, contract: dict, packet: dict, routing: dict, config
 
     text = (output_text or "").strip()
     word_count = len(text.split())
+
+    if routing.get("verifier_backend") == HYBRID and backend is not None and text:
+        semantic = _semantic_defect(text, contract, routing, backend)
+        if semantic:
+            defects.append(semantic)
 
     if not text:
         defects.append(_defect("critical", "Worker produced an empty response."))

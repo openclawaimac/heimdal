@@ -13,3 +13,8 @@ NEED_INPUT = "need_input"
 LENIENT = "lenient"
 STANDARD = "standard"
 STRICT = "strict"
+
+# Verifier backends: rule-based only, or rule-based plus a model-based
+# semantic check (the latter is opt-in via the manifest).
+RULE_BASED = "rule_based"
+HYBRID = "hybrid"

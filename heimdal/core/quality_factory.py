@@ -11,7 +11,7 @@ See docs/builder_pack/04_runtime/QUALITY_FACTORY.md.
 from __future__ import annotations
 
 from heimdal.core import context_os, model_router, verifier
-from heimdal.core.constants import FAIL, NEED_INPUT, PASS
+from heimdal.core.constants import FAIL, HYBRID, NEED_INPUT, PASS
 from heimdal.core.task_contract import requires_grounding
 
 
@@ -25,7 +25,9 @@ def _worker_prompt_with_defects(prompt: str, defects: list[dict]) -> str:
     return prompt + "\n" + "\n".join(lines)
 
 
-def run_quality_factory(contract, role, envelope, backend, storage, config, trace) -> dict:
+def run_quality_factory(
+    contract, role, envelope, backend, storage, config, trace, model_override=None
+) -> dict:
     """Execute the Quality Factory pipeline for one Work Mode task."""
     trace.event("contract_ready", contract_id=contract["contract_id"])
 
@@ -38,7 +40,7 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
         skills=[s["skill_id"] for s in packet["skills_context"]],
     )
 
-    routing = model_router.route(contract, role, backend, config)
+    routing = model_router.route(contract, role, backend, config, model_override)
     trace.event("routing", **routing)
 
     verification = contract.get("verification", {})
@@ -97,39 +99,55 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
         )
         return result
 
-    # Initial draft; high budgets (B3/B4) take the best of multiple samples.
-    best_text = ""
-    best_verification = None
-    for sample in range(routing["samples"]):
-        result = draft(base_prompt, [])
-        trace.event(
-            "worker_draft", sample=sample, model=result.model, latency_ms=result.latency_ms
-        )
-        candidate = verifier.verify(result.text, contract, packet, routing, config)
-        trace.event(
-            "verify", sample=sample, status=candidate["status"], score=candidate["score"]
-        )
-        if best_verification is None or candidate["score"] > best_verification["score"]:
-            best_text, best_verification = result.text, candidate
-        if candidate["status"] == PASS:
-            break
+    def check(text: str):
+        return verifier.verify(text, contract, packet, routing, config, backend)
 
-    repair_iterations = 0
-    while (
-        best_verification["status"] == FAIL
-        and repair_iterations < routing["max_repair_iterations"]
-    ):
-        repair_iterations += 1
-        result = draft(base_prompt, best_verification["defects"])
-        trace.event("repair", iteration=repair_iterations, model=result.model)
-        repaired = verifier.verify(result.text, contract, packet, routing, config)
-        trace.event(
-            "verify", repair=repair_iterations, status=repaired["status"], score=repaired["score"]
+    # Route the backend's request events into this run's Trace Pack.
+    backend.event_sink = trace.event
+    try:
+        # Initial draft; high budgets (B3/B4) take the best of multiple samples.
+        best_text = ""
+        best_verification = None
+        for sample in range(routing["samples"]):
+            result = draft(base_prompt, [])
+            trace.event(
+                "worker_draft", sample=sample, model=result.model, latency_ms=result.latency_ms
+            )
+            candidate = check(result.text)
+            trace.event(
+                "verify", sample=sample, status=candidate["status"], score=candidate["score"]
+            )
+            if best_verification is None or candidate["score"] > best_verification["score"]:
+                best_text, best_verification = result.text, candidate
+            if candidate["status"] == PASS:
+                break
+
+        repair_iterations = 0
+        while (
+            best_verification["status"] == FAIL
+            and repair_iterations < routing["max_repair_iterations"]
+        ):
+            repair_iterations += 1
+            result = draft(base_prompt, best_verification["defects"])
+            trace.event("repair", iteration=repair_iterations, model=result.model)
+            repaired = check(result.text)
+            trace.event(
+                "verify",
+                repair=repair_iterations,
+                status=repaired["status"],
+                score=repaired["score"],
+            )
+            if repaired["score"] >= best_verification["score"]:
+                best_text, best_verification = result.text, repaired
+            if repaired["status"] == PASS:
+                break
+    finally:
+        backend.event_sink = None
+
+    if routing["verifier_backend"] == HYBRID:
+        models_used.append(
+            {"role": "verifier", "model": routing["verifier_model"], "backend": backend.name}
         )
-        if repaired["score"] >= best_verification["score"]:
-            best_text, best_verification = result.text, repaired
-        if repaired["status"] == PASS:
-            break
 
     status = PASS if best_verification["status"] == PASS else FAIL
     if status == FAIL and best_verification.get("missing_sources"):

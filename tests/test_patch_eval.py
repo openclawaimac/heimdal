@@ -51,6 +51,10 @@ class EvalTests(unittest.TestCase):
         self.assertTrue(summary["must_pass_all_passed"])
         for category, stats in summary["categories"].items():
             self.assertTrue(stats["meets_minimum"], f"{category} below minimum")
+        metadata = summary["metadata"]
+        for field in ("heimdal_version", "backend", "manifest_path", "platform"):
+            self.assertIn(field, metadata)
+        self.assertEqual(metadata["backend"], "offline")
 
 
 if __name__ == "__main__":

@@ -27,11 +27,24 @@ from heimdal.ids import now_compact
 from heimdal.storage import Storage
 
 
+def _prefer_backend(args) -> str | None:
+    """Resolve the backend preference from --backend / --offline flags."""
+    if getattr(args, "backend", None):
+        return args.backend
+    if getattr(args, "offline", False):
+        return "offline"
+    return None
+
+
 # -- doctor ----------------------------------------------------------------
 def cmd_doctor(args) -> int:
     config = load_config(args.manifest)
     storage = Storage(config.storage_root).ensure()
-    profile = full_profile(config, run_capability_tests=not args.no_capability_tests)
+    profile = full_profile(
+        config,
+        run_capability_tests=not args.no_capability_tests,
+        capability_model=args.model,
+    )
     profile_path = storage.write_json(
         f"logs/hardware_profiles/{now_compact()}.json", profile
     )
@@ -56,7 +69,7 @@ def cmd_doctor(args) -> int:
         print(f"  ollama models : {', '.join(ollama['models'])}")
     for test in profile["capability_tests"]:
         status = "ok" if test["passed"] else "FAIL"
-        print(f"  capability    : {test['name']} [{status}]")
+        print(f"  capability    : {test['name']} on {test['model']} [{status}]")
     for warning in profile["warnings"]:
         print(f"  warning       : {warning}")
     print(f"  profile       : {profile_path}")
@@ -66,8 +79,9 @@ def cmd_doctor(args) -> int:
 # -- run -------------------------------------------------------------------
 def cmd_run(args) -> int:
     config = load_config(args.manifest)
-    prefer = "offline" if args.offline else None
-    runtime = Runtime(config, prefer_backend=prefer)
+    runtime = Runtime(
+        config, prefer_backend=_prefer_backend(args), model_override=args.model
+    )
     adapter = CLIAdapter()
 
     if args.input:
@@ -89,7 +103,9 @@ def cmd_run(args) -> int:
 # -- eval ------------------------------------------------------------------
 def cmd_eval(args) -> int:
     config = load_config(args.manifest)
-    runtime = Runtime(config, prefer_backend="offline" if args.offline else None)
+    runtime = Runtime(
+        config, prefer_backend=_prefer_backend(args), model_override=args.model
+    )
     summary = eval_runner.run_evals(runtime)
     if args.json:
         print(json.dumps(summary, indent=2, default=str))
@@ -154,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="profile hardware and model backend")
     p_doctor.add_argument("--json", action="store_true", help="emit JSON")
     p_doctor.add_argument("--no-capability-tests", action="store_true")
+    p_doctor.add_argument("--model", help="model to use for capability tests")
     p_doctor.add_argument("--manifest", help="path to the Heimdal manifest")
     p_doctor.set_defaults(func=cmd_doctor)
 
@@ -162,6 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--input", help="path to a Host Task Envelope JSON file")
     p_run.add_argument("--instruction", help="run a plain instruction string")
     p_run.add_argument("--offline", action="store_true", help="force the offline backend")
+    p_run.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
+    p_run.add_argument("--model", help="override the worker model")
     p_run.add_argument("--json", action="store_true", help="emit the Result Envelope as JSON")
     p_run.add_argument("--manifest", help="path to the Heimdal manifest")
     p_run.set_defaults(func=cmd_run)
@@ -169,6 +188,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = sub.add_parser("eval", help="run the eval suite")
     p_eval.add_argument("eval_command", choices=["run"])
     p_eval.add_argument("--offline", action="store_true", help="force the offline backend")
+    p_eval.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
+    p_eval.add_argument("--model", help="override the worker model")
     p_eval.add_argument("--json", action="store_true", help="emit JSON")
     p_eval.add_argument("--manifest", help="path to the Heimdal manifest")
     p_eval.set_defaults(func=cmd_eval)

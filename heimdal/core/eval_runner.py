@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 
+from heimdal import __version__
 from heimdal.core.constants import PASS
 from heimdal.core.runtime import Runtime
 from heimdal.ids import new_id, now_compact, now_iso, repo_root
@@ -89,6 +90,23 @@ def _previous_pass_rate(runtime: Runtime) -> float | None:
         return None
 
 
+def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
+    """Backend/model/platform facts describing how an eval run was executed."""
+    backend = runtime.backend.name
+    return {
+        "heimdal_version": __version__,
+        "backend": backend,
+        "worker_model": sample_metrics.get("worker_model"),
+        "verifier_backend": sample_metrics.get("verifier_backend"),
+        "verifier_model": sample_metrics.get("verifier_model"),
+        "ollama_endpoint": (
+            runtime.config.ollama.get("base_url") if backend == "ollama" else None
+        ),
+        "manifest_path": runtime.config.manifest_path,
+        "platform": runtime.hardware_profile,
+    }
+
+
 def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> dict:
     """Run the full eval suite and write a summary JSON."""
     runtime = runtime or Runtime()
@@ -97,6 +115,7 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
 
     results: list[dict] = []
     category_stats: dict[str, dict] = {}
+    sample_metrics: dict = {}
     for category, cases in suite.items():
         passed = 0
         for case in cases:
@@ -105,6 +124,8 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
                 result = runtime.run_envelope(envelope)
                 actual = result["status"]
                 error = None
+                if not sample_metrics:
+                    sample_metrics = result.get("metrics", {})
             except Exception as exc:  # noqa: BLE001 - eval must not crash the suite
                 actual = "error"
                 error = str(exc)
@@ -140,6 +161,7 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
     summary = {
         "eval_run_id": new_id("evalrun"),
         "timestamp": now_iso(),
+        "metadata": _runtime_metadata(runtime, sample_metrics),
         "total": total,
         "passed": total_passed,
         "pass_rate": pass_rate,
