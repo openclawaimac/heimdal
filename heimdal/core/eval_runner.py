@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 
+from heimdal.core.constants import PASS
 from heimdal.core.runtime import Runtime
 from heimdal.ids import new_id, now_compact, now_iso, repo_root
+from heimdal.storage import Storage
 
 EVAL_DIR = "eval"
 CATEGORY_FILES = {
@@ -61,11 +63,9 @@ def load_suite(eval_dir: str | None = None) -> dict[str, list[dict]]:
     base = eval_dir or os.path.join(repo_root(), EVAL_DIR)
     suite: dict[str, list[dict]] = {}
     for category, filename in CATEGORY_FILES.items():
-        path = os.path.join(base, filename)
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as fh:
-                suite[category] = json.load(fh)
-        else:
+        try:
+            suite[category] = Storage.read_json(os.path.join(base, filename))
+        except FileNotFoundError:
             suite[category] = []
     return suite
 
@@ -84,8 +84,7 @@ def _previous_pass_rate(runtime: Runtime) -> float | None:
         return None
     latest = max(summaries, key=os.path.getmtime)
     try:
-        with open(latest, "r", encoding="utf-8") as fh:
-            return json.load(fh).get("pass_rate")
+        return Storage.read_json(latest).get("pass_rate")
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -109,7 +108,7 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
             except Exception as exc:  # noqa: BLE001 - eval must not crash the suite
                 actual = "error"
                 error = str(exc)
-            expected = case.get("expect_status", "pass")
+            expected = case.get("expect_status", PASS)
             ok = actual == expected
             passed += int(ok)
             results.append(
@@ -132,9 +131,8 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
     total = len(results)
     total_passed = sum(1 for r in results if r["passed"])
     pass_rate = round(total_passed / total, 4) if total else 0.0
-    must_pass_all = category_stats.get("must_pass", {}).get("passed", 0) == category_stats.get(
-        "must_pass", {}
-    ).get("total", -1)
+    must_pass = category_stats["must_pass"]
+    must_pass_all = must_pass["total"] > 0 and must_pass["passed"] == must_pass["total"]
     regressed = bool(
         prior_rate is not None and pass_rate < prior_rate - REGRESSION_TOLERANCE
     )

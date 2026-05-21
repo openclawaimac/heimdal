@@ -23,6 +23,13 @@ def _requires_sources(task_request: dict, role: dict) -> bool:
     return role.get("role_id") in ("research", "finance")
 
 
+def requires_grounding(verification: dict) -> bool:
+    """Whether a contract's verification block demands source-grounded output."""
+    return bool(
+        verification.get("requires_sources") or verification.get("requires_citations")
+    )
+
+
 def _requires_schema(task_request: dict) -> bool:
     outputs = task_request.get("expected_outputs", []) or []
     return any("json" in str(o).lower() or "schema" in str(o).lower() for o in outputs)
@@ -91,8 +98,10 @@ def build_contract(envelope: dict, role: dict, config) -> dict:
         },
     }
 
-    schema = jsonschema_min.load_schema(config.schema_path("task_contract.schema.json"))
-    errors = jsonschema_min.validate(contract, schema)
-    if errors:
-        raise ContractError("Invalid Task Contract: " + "; ".join(errors))
+    jsonschema_min.validate_or_raise(
+        contract,
+        config.schema_path("task_contract.schema.json"),
+        "Task Contract",
+        ContractError,
+    )
     return contract

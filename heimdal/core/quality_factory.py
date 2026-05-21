@@ -11,6 +11,8 @@ See docs/builder_pack/04_runtime/QUALITY_FACTORY.md.
 from __future__ import annotations
 
 from heimdal.core import context_os, model_router, verifier
+from heimdal.core.constants import FAIL, NEED_INPUT, PASS
+from heimdal.core.task_contract import requires_grounding
 
 
 def _worker_prompt_with_defects(prompt: str, defects: list[dict]) -> str:
@@ -40,26 +42,25 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
     trace.event("routing", **routing)
 
     verification = contract.get("verification", {})
-    requires_sources = verification.get("requires_sources") or verification.get(
-        "requires_citations"
-    )
 
-    # -- No-Guess Gate (pre-model) ----------------------------------------
-    if verification.get("no_guess_gate") and requires_sources and not packet["truth_context"]:
-        trace.event("no_guess_gate", outcome="need_input")
+    # No-Guess Gate: stop before the model call when a source-required task has
+    # no retrieved sources, and return need_input rather than guessing.
+    needs_sources = verification.get("no_guess_gate") and requires_grounding(verification)
+    if needs_sources and not packet["truth_context"]:
+        trace.event("no_guess_gate", outcome=NEED_INPUT)
         question = (
             "This task requires grounded sources, but none were found in the local "
             f"Truth Vault for: {contract['objective']!r}. Provide the source "
             "document or reference so Heimdal can answer without guessing."
         )
         return {
-            "status": "need_input",
+            "status": NEED_INPUT,
             "output_text": "",
             "questions": [question],
             "packet": packet,
             "routing": routing,
             "verification": {
-                "status": "fail",
+                "status": FAIL,
                 "score": 0.0,
                 "defects": [
                     {
@@ -96,7 +97,7 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
         )
         return result
 
-    # -- initial draft (multi-sample for high budgets) --------------------
+    # Initial draft; high budgets (B3/B4) take the best of multiple samples.
     best_text = ""
     best_verification = None
     for sample in range(routing["samples"]):
@@ -110,13 +111,12 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
         )
         if best_verification is None or candidate["score"] > best_verification["score"]:
             best_text, best_verification = result.text, candidate
-        if candidate["status"] == "pass":
+        if candidate["status"] == PASS:
             break
 
-    # -- repair loop ------------------------------------------------------
     repair_iterations = 0
     while (
-        best_verification["status"] == "fail"
+        best_verification["status"] == FAIL
         and repair_iterations < routing["max_repair_iterations"]
     ):
         repair_iterations += 1
@@ -128,12 +128,12 @@ def run_quality_factory(contract, role, envelope, backend, storage, config, trac
         )
         if repaired["score"] >= best_verification["score"]:
             best_text, best_verification = result.text, repaired
-        if repaired["status"] == "pass":
+        if repaired["status"] == PASS:
             break
 
-    status = "pass" if best_verification["status"] == "pass" else "fail"
-    if status == "fail" and best_verification.get("missing_sources"):
-        status = "need_input"
+    status = PASS if best_verification["status"] == PASS else FAIL
+    if status == FAIL and best_verification.get("missing_sources"):
+        status = NEED_INPUT
 
     return {
         "status": status,

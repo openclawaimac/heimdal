@@ -13,6 +13,7 @@ import time
 
 from heimdal.config import Config, load_config
 from heimdal.core import intake, quality_factory, repro_trace
+from heimdal.core.constants import FAIL, NEED_INPUT, PASS
 from heimdal.core.role_binding import resolve_role
 from heimdal.core.scheduler import WORK, Scheduler
 from heimdal.core.task_contract import build_contract
@@ -47,6 +48,8 @@ class Runtime:
         _seed_storage(self.storage)
         self.backend = select_backend(self.config, prefer=prefer_backend)
         self.scheduler = Scheduler(self.config)
+        # Hardware does not change during a session; profile once and reuse.
+        self.hardware_profile = quick_profile(self.config)
 
     # -- public API --------------------------------------------------------
     def run_envelope(self, envelope: dict, mode: str = WORK) -> dict:
@@ -60,7 +63,15 @@ class Runtime:
         allowed, reason = self.scheduler.can_run(mode)
         if not allowed:
             return self._envelope(
-                validated, contract, "fail", reason, [], [], {}, {}, {}
+                validated=validated,
+                contract=contract,
+                status=FAIL,
+                message=reason,
+                artifacts=[],
+                questions=[],
+                repro={},
+                trace={},
+                metrics={},
             )
 
         trace = repro_trace.TraceBuilder(contract["task_id"])
@@ -94,7 +105,7 @@ class Runtime:
                 "contract": sha256_obj(contract),
                 "context_packet": outcome["packet"]["hashes"]["packet"],
             },
-            hardware_profile=quick_profile(self.config),
+            hardware_profile=self.hardware_profile,
             retrieval_refs=[s["ref"] for s in outcome["packet"]["truth_context"]],
         )
         trace_pack = trace.build(outcome["status"], metrics)
@@ -102,17 +113,16 @@ class Runtime:
             self.storage, self.config, repro, trace_pack
         )
 
-        message = self._message(outcome)
         return self._envelope(
-            validated,
-            contract,
-            outcome["status"],
-            message,
-            artifacts,
-            outcome.get("questions", []),
-            {"id": repro["id"], "path": pack_paths["repro_pack"]},
-            {"id": trace_pack["id"], "path": pack_paths["trace_pack"]},
-            metrics,
+            validated=validated,
+            contract=contract,
+            status=outcome["status"],
+            message=self._message(outcome),
+            artifacts=artifacts,
+            questions=outcome.get("questions", []),
+            repro={"id": repro["id"], "path": pack_paths["repro_pack"]},
+            trace={"id": trace_pack["id"], "path": pack_paths["trace_pack"]},
+            metrics=metrics,
         )
 
     def run_demo(self) -> dict:
@@ -151,9 +161,9 @@ class Runtime:
 
     @staticmethod
     def _message(outcome: dict) -> str:
-        if outcome["status"] == "need_input":
+        if outcome["status"] == NEED_INPUT:
             return outcome["questions"][0] if outcome["questions"] else "Input required."
-        if outcome["status"] == "pass":
+        if outcome["status"] == PASS:
             return "Task completed and verified PASS."
         defects = outcome["verification"].get("defects", [])
         top = defects[0]["message"] if defects else "Verification failed."
@@ -161,7 +171,7 @@ class Runtime:
 
     @staticmethod
     def _envelope(
-        validated, contract, status, message, artifacts, questions, repro, trace, metrics
+        *, validated, contract, status, message, artifacts, questions, repro, trace, metrics
     ) -> dict:
         return {
             "task_id": contract["task_id"],

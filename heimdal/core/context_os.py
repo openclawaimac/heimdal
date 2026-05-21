@@ -114,10 +114,12 @@ def build_packet(contract: dict, role: dict, envelope: dict, storage, config) ->
         {k: v for k, v in packet.items() if k != "hashes"}
     )
 
-    schema = jsonschema_min.load_schema(config.schema_path("context_packet.schema.json"))
-    errors = jsonschema_min.validate(packet, schema)
-    if errors:
-        raise ContextError("Invalid Context Packet: " + "; ".join(errors))
+    jsonschema_min.validate_or_raise(
+        packet,
+        config.schema_path("context_packet.schema.json"),
+        "Context Packet",
+        ContextError,
+    )
     return packet
 
 

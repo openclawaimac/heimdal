@@ -7,22 +7,23 @@ profile, retrieval requirement, verifier strictness, and repair budget
 
 from __future__ import annotations
 
+from heimdal.core.constants import LENIENT, STANDARD, STRICT
+from heimdal.models.offline import OFFLINE_MODEL, OfflineBackend
+
 # Behaviour per budget level (docs/builder_pack/01_architecture/WORK_DREAM_MIRROR_MODES.md).
 BUDGET_BEHAVIOUR = {
-    "B0": {"verifier_strictness": "lenient", "max_repair": 0, "samples": 1, "retrieval": False},
-    "B1": {"verifier_strictness": "standard", "max_repair": 1, "samples": 1, "retrieval": False},
-    "B2": {"verifier_strictness": "standard", "max_repair": 2, "samples": 1, "retrieval": True},
-    "B3": {"verifier_strictness": "strict", "max_repair": 2, "samples": 2, "retrieval": True},
-    "B4": {"verifier_strictness": "strict", "max_repair": 3, "samples": 3, "retrieval": True},
+    "B0": {"verifier_strictness": LENIENT, "max_repair": 0, "samples": 1, "retrieval": False},
+    "B1": {"verifier_strictness": STANDARD, "max_repair": 1, "samples": 1, "retrieval": False},
+    "B2": {"verifier_strictness": STANDARD, "max_repair": 2, "samples": 1, "retrieval": True},
+    "B3": {"verifier_strictness": STRICT, "max_repair": 2, "samples": 2, "retrieval": True},
+    "B4": {"verifier_strictness": STRICT, "max_repair": 3, "samples": 3, "retrieval": True},
 }
 
 
-def _resolve_model(profile_name: str, backend, config) -> str:
-    profile = config.model_profiles.get(profile_name, {})
-    candidates = profile.get("candidates", []) or []
-    if backend.name == "offline":
-        return "heimdal-offline-stub"
-    installed = set(backend.list_models())
+def _resolve_model(profile_name: str, installed: set[str] | None, config) -> str:
+    if installed is None:  # offline backend
+        return OFFLINE_MODEL
+    candidates = config.model_profiles.get(profile_name, {}).get("candidates", []) or []
     for candidate in candidates:
         if candidate in installed:
             return candidate
@@ -49,12 +50,19 @@ def route(contract: dict, role: dict, backend, config) -> dict:
         max(0, contract.get("budget", {}).get("max_iterations", 3) - 1),
     )
 
+    # Fetch the installed model list once, not once per profile.
+    installed = (
+        None
+        if backend.name == OfflineBackend.name
+        else set(backend.list_models())
+    )
+
     return {
         "quality_level": quality_level,
         "worker_profile": worker_profile,
-        "worker_model": _resolve_model(worker_profile, backend, config),
+        "worker_model": _resolve_model(worker_profile, installed, config),
         "verifier_profile": "verifier",
-        "verifier_model": _resolve_model("verifier", backend, config),
+        "verifier_model": _resolve_model("verifier", installed, config),
         "brain_profile": brain_profile,
         "verifier_strictness": behaviour["verifier_strictness"],
         "retrieval_required": behaviour["retrieval"],

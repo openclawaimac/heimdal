@@ -12,7 +12,7 @@ import re
 
 from heimdal.models.base import GenerationResult, ModelBackend
 
-_OFFLINE_MODEL = "heimdal-offline-stub"
+OFFLINE_MODEL = "heimdal-offline-stub"
 
 
 def _clean(text: str) -> str:
@@ -47,13 +47,13 @@ class OfflineBackend(ModelBackend):
         return True
 
     def list_models(self) -> list[str]:
-        return [_OFFLINE_MODEL]
+        return [OFFLINE_MODEL]
 
     def generate(
         self,
         prompt: str,
         *,
-        model: str = _OFFLINE_MODEL,
+        model: str = OFFLINE_MODEL,
         system: str = "",
         json_mode: bool = False,
         max_tokens: int = 512,
@@ -73,7 +73,7 @@ class OfflineBackend(ModelBackend):
 
         return GenerationResult(
             text=text,
-            model=_OFFLINE_MODEL,
+            model=OFFLINE_MODEL,
             backend=self.name,
             latency_ms=0.0,
             raw={"deterministic": True},
@@ -105,7 +105,7 @@ class OfflineBackend(ModelBackend):
                 "instruction": instruction,
                 "answer": (_clean(truth[0]) if truth else instruction),
                 "sources_used": len(truth),
-                "generated_by": _OFFLINE_MODEL,
+                "generated_by": OFFLINE_MODEL,
             },
             indent=2,
         )

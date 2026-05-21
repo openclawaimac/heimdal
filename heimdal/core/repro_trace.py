@@ -57,17 +57,14 @@ def build_repro_pack(
     }
 
 
-def _validate(obj: dict, schema_name: str, config) -> None:
-    schema = jsonschema_min.load_schema(config.schema_path(schema_name))
-    errors = jsonschema_min.validate(obj, schema)
-    if errors:
-        raise ValueError(f"Invalid {schema_name}: " + "; ".join(errors))
-
-
 def write_packs(storage, config, repro: dict, trace: dict) -> dict:
     """Validate and persist a Repro Pack and Trace Pack; return their paths."""
-    _validate(repro, "repro_pack.schema.json", config)
-    _validate(trace, "trace_pack.schema.json", config)
+    jsonschema_min.validate_or_raise(
+        repro, config.schema_path("repro_pack.schema.json"), "Repro Pack"
+    )
+    jsonschema_min.validate_or_raise(
+        trace, config.schema_path("trace_pack.schema.json"), "Trace Pack"
+    )
     repro_path = storage.write_json(
         f"logs/repro_packs/{repro['id']}.json", repro
     )

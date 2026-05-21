@@ -7,6 +7,7 @@ import os
 import yaml
 
 from heimdal.config import load_config
+from heimdal.ids import repo_root
 
 
 def temp_config(storage_dir: str):
@@ -30,5 +31,4 @@ def write_temp_manifest(directory: str, storage_dir: str) -> str:
 
 
 def repo_path(*parts: str) -> str:
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(root, *parts)
+    return os.path.join(repo_root(), *parts)

@@ -8,6 +8,7 @@ Kept in-repo to avoid an external dependency.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Any
 
 _TYPE_MAP = {
@@ -83,6 +84,16 @@ def is_valid(instance: Any, schema: dict) -> bool:
     return not validate(instance, schema)
 
 
+@lru_cache(maxsize=None)
 def load_schema(path: str) -> dict:
+    """Load a schema file. Cached: schema files are immutable at runtime and
+    callers treat the result as read-only."""
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def validate_or_raise(instance: Any, schema_path: str, label: str, exc=ValueError) -> None:
+    """Validate ``instance`` against the schema at ``schema_path`` or raise."""
+    errors = validate(instance, load_schema(schema_path))
+    if errors:
+        raise exc(f"Invalid {label}: " + "; ".join(errors))

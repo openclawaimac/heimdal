@@ -8,9 +8,9 @@ Validates Heimdal patches and enforces the channel rule: no patch reaches the
 from __future__ import annotations
 
 import json
-import os
 
 from heimdal import jsonschema_min
+from heimdal.storage import Storage
 
 CHANNELS = ["experimental", "beta", "stable", "rejected"]
 PATCH_TYPES = [
@@ -29,8 +29,7 @@ class PatchError(ValueError):
 
 
 def load_patch(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    return Storage.read_json(path)
 
 
 def validate_patch(patch: dict, config) -> list[str]:
@@ -41,10 +40,10 @@ def validate_patch(patch: dict, config) -> list[str]:
 
 def validate_patch_file(path: str, config) -> tuple[bool, list[str]]:
     """Validate a patch file. Returns (is_valid, errors)."""
-    if not os.path.exists(path):
-        return False, [f"patch file not found: {path}"]
     try:
         patch = load_patch(path)
+    except FileNotFoundError:
+        return False, [f"patch file not found: {path}"]
     except json.JSONDecodeError as exc:
         return False, [f"patch file is not valid JSON: {exc}"]
     errors = validate_patch(patch, config)
