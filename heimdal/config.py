@@ -76,6 +76,10 @@ class Config:
         return self.manifest.get("verifier", {})
 
     @property
+    def retrieval(self) -> dict:
+        return self.manifest.get("retrieval", {})
+
+    @property
     def privacy_mode(self) -> str:
         return self.runtime.get("privacy_mode", "local_only")
 

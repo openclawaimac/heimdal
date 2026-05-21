@@ -92,6 +92,26 @@ class TruthRetrievalTests(unittest.TestCase):
         refs = {s["ref"] for s in TruthStore(self.truth_dir).list_sources()}
         self.assertEqual(refs, {"a.md", "b.txt"})
 
+    def test_top_k_limits_results(self):
+        for i in range(5):
+            _write(
+                self.truth_dir,
+                f"doc{i}.md",
+                "Widget pricing discount policy and widget order details.",
+            )
+        hits = TruthStore(self.truth_dir).retrieve("widget pricing discount", k=2)
+        self.assertEqual(len(hits), 2)
+
+    def test_min_score_filters_weak_matches(self):
+        _write(
+            self.truth_dir,
+            "doc.md",
+            "Widget pricing discount policy and widget order details.",
+        )
+        store = TruthStore(self.truth_dir)
+        self.assertTrue(store.retrieve("widget pricing discount", min_score=0.0))
+        self.assertEqual(store.retrieve("widget pricing discount", min_score=999.0), [])
+
 
 class TruthGroundedRuntimeTests(unittest.TestCase):
     """No-Guess Gate: missing/irrelevant -> need_input; relevant -> grounded pass."""
@@ -115,8 +135,17 @@ class TruthGroundedRuntimeTests(unittest.TestCase):
             _source_task("State the refund policy for Product Zeta.")
         )
         self.assertEqual(result["status"], "pass")
+        # Repro Pack records the retrieved source ref with its BM25 score.
         repro = Storage.read_json(result["repro_pack"]["path"])
-        self.assertIn("refund_policy.md", repro["retrieval_refs"])
+        refs = repro["retrieval_refs"]
+        self.assertIn("refund_policy.md", [r["ref"] for r in refs])
+        self.assertTrue(all(isinstance(r["score"], (int, float)) for r in refs))
+        # Trace Pack records the same refs with scores.
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        packet_event = next(
+            e for e in trace["events"] if e["name"] == "context_packet_ready"
+        )
+        self.assertTrue(all("score" in r for r in packet_event["data"]["truth_refs"]))
 
     def test_missing_source_returns_need_input(self):
         # `.keep` makes the vault non-empty so seeding is skipped, but it is not

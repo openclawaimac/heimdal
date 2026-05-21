@@ -30,6 +30,12 @@ budgets:
   max_repair_iterations: 2
   max_input_tokens: 8000
   max_output_tokens: 2000
+retrieval:
+  # Truth Vault retrieval limits. top_k caps how many sources enter the
+  # Context Packet; min_score drops weak BM25 matches (0.0 = keep all that
+  # pass the minimum-overlap relevance gate).
+  top_k: 3
+  min_score: 0.0
 verifier:
   # Rule-based verification always runs. When semantic verification is enabled,
   # a model-based semantic check runs first for tasks at or above the minimum

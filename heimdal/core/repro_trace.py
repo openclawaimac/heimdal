@@ -39,7 +39,7 @@ def build_repro_pack(
     params: dict,
     hashes: dict,
     hardware_profile: dict | None = None,
-    retrieval_refs: list[str] | None = None,
+    retrieval_refs: list | None = None,
 ) -> dict:
     return {
         "id": new_id("repro"),

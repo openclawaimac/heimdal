@@ -32,11 +32,10 @@ def run_quality_factory(
     trace.event("contract_ready", contract_id=contract["contract_id"])
 
     packet = context_os.build_packet(contract, role, envelope, storage, config)
-    truth_refs = [s["ref"] for s in packet["truth_context"]]
     trace.event(
         "context_packet_ready",
         packet_id=packet["packet_id"],
-        truth_refs=truth_refs,
+        truth_refs=context_os.retrieval_refs(packet),
         skills=[s["skill_id"] for s in packet["skills_context"]],
     )
 

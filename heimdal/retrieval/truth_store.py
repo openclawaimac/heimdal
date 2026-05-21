@@ -109,8 +109,14 @@ class TruthStore:
             )
         return docs
 
-    def retrieve(self, query: str, k: int = 3) -> list[TruthSnippet]:
-        """Return the top-k Truth Vault snippets relevant to ``query``."""
+    def retrieve(
+        self, query: str, k: int = 3, min_score: float = 0.0
+    ) -> list[TruthSnippet]:
+        """Return the top-k Truth Vault snippets relevant to ``query``.
+
+        A document must share at least ``MIN_OVERLAP`` query terms and score at
+        least ``min_score`` (BM25) to be returned.
+        """
         query_terms = set(_tokens(query))
         if not query_terms:
             return []
@@ -141,6 +147,8 @@ class TruthStore:
                     1 - _BM25_B + _BM25_B * doc.length / avgdl
                 )
                 score += idf * (freq * (_BM25_K1 + 1)) / denom
+            if score < min_score:
+                continue
             results.append(
                 TruthSnippet(ref=doc.ref, path=doc.path, text=doc.text, score=round(score, 4))
             )

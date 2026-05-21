@@ -12,7 +12,7 @@ import shutil
 import time
 
 from heimdal.config import Config, load_config
-from heimdal.core import intake, quality_factory, repro_trace
+from heimdal.core import context_os, intake, quality_factory, repro_trace
 from heimdal.core.constants import FAIL, NEED_INPUT, PASS
 from heimdal.core.role_binding import resolve_role
 from heimdal.core.scheduler import WORK, Scheduler
@@ -126,7 +126,7 @@ class Runtime:
                 "context_packet": outcome["packet"]["hashes"]["packet"],
             },
             hardware_profile=self.hardware_profile,
-            retrieval_refs=[s["ref"] for s in outcome["packet"]["truth_context"]],
+            retrieval_refs=context_os.retrieval_refs(outcome["packet"]),
         )
         trace_pack = trace.build(outcome["status"], metrics)
         pack_paths = repro_trace.write_packs(

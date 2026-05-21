@@ -64,7 +64,12 @@ def build_packet(contract: dict, role: dict, envelope: dict, storage, config) ->
     instruction = contract.get("objective", "")
 
     truth_store = TruthStore(storage.path("truth"))
-    truth_hits = truth_store.retrieve(instruction)
+    retrieval_cfg = config.retrieval
+    truth_hits = truth_store.retrieve(
+        instruction,
+        k=retrieval_cfg.get("top_k", 3),
+        min_score=retrieval_cfg.get("min_score", 0.0),
+    )
     truth_context = [
         {"ref": hit.ref, "text": hit.text, "score": hit.score} for hit in truth_hits
     ]
@@ -139,6 +144,14 @@ def _enforce_budget(packet: dict) -> None:
                 snippet["text"] = " ".join(words[:80]) + " ..."
     while _packet_tokens(packet) > max_tokens and len(packet["truth_context"]) > 1:
         packet["truth_context"].pop()
+
+
+def retrieval_refs(packet: dict) -> list[dict]:
+    """Truth Vault source refs with BM25 scores, for Repro/Trace logging."""
+    return [
+        {"ref": snippet["ref"], "score": snippet["score"]}
+        for snippet in packet.get("truth_context", [])
+    ]
 
 
 def render_worker_input(packet: dict, role: dict) -> tuple[str, dict]:
