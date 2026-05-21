@@ -8,6 +8,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal run --instruction "..."
     heimdal eval run
     heimdal patch validate <patch_file>
+    heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
 """
 
@@ -15,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 
 from heimdal import __version__
@@ -24,6 +27,7 @@ from heimdal.core import eval_runner, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.hardware.profiler import full_profile
 from heimdal.ids import now_compact
+from heimdal.retrieval.truth_store import TruthStore
 from heimdal.storage import Storage
 
 
@@ -139,6 +143,55 @@ def cmd_patch(args) -> int:
     return 1
 
 
+# -- truth -----------------------------------------------------------------
+def cmd_truth(args) -> int:
+    config = load_config(args.manifest)
+    truth_dir = Storage(config.storage_root).ensure().path("truth")
+    store = TruthStore(truth_dir)
+
+    if args.truth_command == "list":
+        sources = store.list_sources()
+        if not sources:
+            print(f"Truth Vault is empty ({truth_dir}).")
+            return 0
+        for source in sources:
+            print(f"  {source['ref']}  ({source['size_bytes']} bytes)")
+        print(f"{len(sources)} source(s) in {truth_dir}")
+        return 0
+
+    if args.truth_command == "add":
+        if not args.argument:
+            print("error: 'truth add' requires a file path", file=sys.stderr)
+            return 2
+        if not os.path.isfile(args.argument):
+            print(f"error: file not found - {args.argument}", file=sys.stderr)
+            return 2
+        if not args.argument.lower().endswith((".md", ".txt")):
+            print(
+                "error: only .md and .txt files can be added to the Truth Vault",
+                file=sys.stderr,
+            )
+            return 2
+        dest = os.path.join(truth_dir, os.path.basename(args.argument))
+        shutil.copy2(args.argument, dest)
+        print(f"added: {os.path.basename(args.argument)} -> {dest}")
+        return 0
+
+    if args.truth_command == "search":
+        if not args.argument:
+            print("error: 'truth search' requires a query", file=sys.stderr)
+            return 2
+        hits = store.retrieve(args.argument)
+        if not hits:
+            print("No matching truth sources.")
+            return 0
+        for hit in hits:
+            print(f"  [score {hit.score}] {hit.ref}")
+        return 0
+
+    return 2
+
+
 # -- logs ------------------------------------------------------------------
 def cmd_logs(args) -> int:
     config = load_config(args.manifest)
@@ -207,6 +260,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_patch.add_argument("patch_file", help="path to a patch JSON file")
     p_patch.add_argument("--manifest", help="path to the Heimdal manifest")
     p_patch.set_defaults(func=cmd_patch)
+
+    p_truth = sub.add_parser("truth", help="manage the local Truth Vault")
+    p_truth.add_argument("truth_command", choices=["list", "add", "search"])
+    p_truth.add_argument(
+        "argument", nargs="?", help="file path (add) or query string (search)"
+    )
+    p_truth.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_truth.set_defaults(func=cmd_truth)
 
     p_logs = sub.add_parser("logs", help="inspect run logs")
     p_logs.add_argument("logs_command", choices=["latest"])

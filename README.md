@@ -32,6 +32,9 @@ heimdal run --input examples/tasks/simple_task.json
 heimdal run --instruction "Explain what a queue is."
 heimdal eval run                              # run the eval suite + write a summary
 heimdal patch validate examples/patches/good.json
+heimdal truth list                            # list local Truth Vault sources
+heimdal truth add notes.md                    # add a .md/.txt file to the vault
+heimdal truth search "refund policy"          # BM25 search over the vault
 heimdal logs latest                           # inspect the most recent run
 ```
 

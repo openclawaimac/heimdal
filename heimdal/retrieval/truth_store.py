@@ -1,12 +1,18 @@
 """Truth Vault retrieval.
 
 Heimdal is truth-first: factual answers must be grounded in the local Truth
-Vault (storage/truth) rather than guessed. This module does keyword retrieval
-over that directory with no external dependency.
+Vault (storage/truth) rather than guessed. This module does BM25-style keyword
+retrieval over plain-text and markdown files in that directory, with no
+external dependency.
+
+A document must share at least ``MIN_OVERLAP`` distinct content words with the
+query before it is considered a match. That gate keeps the No-Guess Gate
+honest: an irrelevant file in the vault must not let a sourced task answer.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -19,12 +25,14 @@ _STOPWORDS = {
     "summarize", "provide", "precise", "guaranteed", "reported", "offered",
 }
 
-_TEXT_EXTENSIONS = (".md", ".txt", ".json", ".yml", ".yaml")
+# Plain-text and markdown only (v0.2.2 Truth Vault scope).
+_TEXT_EXTENSIONS = (".md", ".txt")
 
-# A single shared word is too weak to count as a grounding source; require at
-# least this many overlapping content words before a document is considered a
-# match. This keeps the No-Guess Gate honest.
 MIN_OVERLAP = 2
+
+# Standard BM25 parameters.
+_BM25_K1 = 1.5
+_BM25_B = 0.75
 
 
 @dataclass
@@ -35,13 +43,22 @@ class TruthSnippet:
     score: float
 
 
+@dataclass
+class _Doc:
+    ref: str
+    path: str
+    text: str
+    tf: dict[str, int]
+    length: int
+
+
 def _tokens(text: str) -> list[str]:
     words = re.findall(r"[a-z0-9]+", text.lower())
     return [w for w in words if w not in _STOPWORDS and len(w) > 1]
 
 
 class TruthStore:
-    """Keyword retrieval over the local Truth Vault."""
+    """BM25-style keyword retrieval over the local Truth Vault."""
 
     def __init__(self, truth_dir: str):
         self.truth_dir = truth_dir
@@ -54,35 +71,79 @@ class TruthStore:
                 if name.lower().endswith(_TEXT_EXTENSIONS):
                     yield os.path.join(root, name)
 
-    def retrieve(self, query: str, k: int = 3, min_score: float = 0.12) -> list[TruthSnippet]:
-        """Return the top-k truth snippets relevant to ``query``."""
-        query_tokens = set(_tokens(query))
-        if not query_tokens:
-            return []
+    def list_sources(self) -> list[dict]:
+        """List Truth Vault files with their ref and size."""
+        sources = []
+        for path in self._iter_files():
+            sources.append(
+                {
+                    "ref": os.path.relpath(path, self.truth_dir),
+                    "path": path,
+                    "size_bytes": os.path.getsize(path),
+                }
+            )
+        return sources
 
-        results: list[TruthSnippet] = []
+    def _load_corpus(self) -> list[_Doc]:
+        docs: list[_Doc] = []
         for path in self._iter_files():
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as fh:
                     content = fh.read().strip()
             except OSError:
                 continue
-            if not content:
+            tokens = _tokens(content)
+            if not content or not tokens:
                 continue
-            doc_tokens = _tokens(content)
-            if not doc_tokens:
-                continue
-            overlap = query_tokens & set(doc_tokens)
-            score = len(overlap) / len(query_tokens)
-            if len(overlap) >= MIN_OVERLAP and score >= min_score:
-                results.append(
-                    TruthSnippet(
-                        ref=os.path.relpath(path, self.truth_dir),
-                        path=path,
-                        text=content,
-                        score=round(score, 3),
-                    )
+            tf: dict[str, int] = {}
+            for token in tokens:
+                tf[token] = tf.get(token, 0) + 1
+            docs.append(
+                _Doc(
+                    ref=os.path.relpath(path, self.truth_dir),
+                    path=path,
+                    text=content,
+                    tf=tf,
+                    length=len(tokens),
                 )
+            )
+        return docs
+
+    def retrieve(self, query: str, k: int = 3) -> list[TruthSnippet]:
+        """Return the top-k Truth Vault snippets relevant to ``query``."""
+        query_terms = set(_tokens(query))
+        if not query_terms:
+            return []
+
+        docs = self._load_corpus()
+        if not docs:
+            return []
+
+        total = len(docs)
+        avgdl = sum(d.length for d in docs) / total
+        doc_freq: dict[str, int] = {}
+        for doc in docs:
+            for term in doc.tf:
+                doc_freq[term] = doc_freq.get(term, 0) + 1
+
+        results: list[TruthSnippet] = []
+        for doc in docs:
+            overlap = query_terms & set(doc.tf)
+            if len(overlap) < MIN_OVERLAP:
+                continue  # relevance gate: too weak to count as a source
+            score = 0.0
+            for term in overlap:
+                idf = math.log(
+                    1 + (total - doc_freq[term] + 0.5) / (doc_freq[term] + 0.5)
+                )
+                freq = doc.tf[term]
+                denom = freq + _BM25_K1 * (
+                    1 - _BM25_B + _BM25_B * doc.length / avgdl
+                )
+                score += idf * (freq * (_BM25_K1 + 1)) / denom
+            results.append(
+                TruthSnippet(ref=doc.ref, path=doc.path, text=doc.text, score=round(score, 4))
+            )
 
         results.sort(key=lambda s: s.score, reverse=True)
         return results[:k]
