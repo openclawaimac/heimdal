@@ -169,7 +169,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doctor = sub.add_parser("doctor", help="profile hardware and model backend")
     p_doctor.add_argument("--json", action="store_true", help="emit JSON")
-    p_doctor.add_argument("--no-capability-tests", action="store_true")
+    capability = p_doctor.add_mutually_exclusive_group()
+    capability.add_argument(
+        "--capability-test",
+        action="store_true",
+        help="explicitly run model capability tests (the default)",
+    )
+    capability.add_argument(
+        "--no-capability-tests", action="store_true", help="skip model capability tests"
+    )
     p_doctor.add_argument("--model", help="model to use for capability tests")
     p_doctor.add_argument("--manifest", help="path to the Heimdal manifest")
     p_doctor.set_defaults(func=cmd_doctor)

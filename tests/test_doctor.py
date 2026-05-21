@@ -6,7 +6,7 @@ import unittest
 
 from tests.helpers import temp_config, write_temp_manifest
 
-from heimdal.cli import main
+from heimdal.cli import build_parser, main
 from heimdal.hardware.profiler import deployment_mode, full_profile
 
 
@@ -43,6 +43,28 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(deployment_mode(0), "Dev")
         self.assertEqual(deployment_mode(1), "Single Device")
         self.assertEqual(deployment_mode(8), "Factory")
+
+    def test_capability_test_flags(self):
+        parser = build_parser()
+        # Explicit enable and default both leave capability tests on.
+        self.assertTrue(parser.parse_args(["doctor", "--capability-test"]).capability_test)
+        self.assertFalse(parser.parse_args(["doctor"]).no_capability_tests)
+        # Explicit disable.
+        self.assertTrue(
+            parser.parse_args(["doctor", "--no-capability-tests"]).no_capability_tests
+        )
+        # The two flags are mutually exclusive — supplying both is a CLI error.
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["doctor", "--capability-test", "--no-capability-tests"])
+
+    def test_doctor_runs_with_capability_test_flag(self):
+        manifest = write_temp_manifest(self.tmp, self.tmp)
+        self.assertEqual(
+            main(["doctor", "--capability-test", "--json", "--manifest", manifest]), 0
+        )
+        self.assertEqual(
+            main(["doctor", "--no-capability-tests", "--json", "--manifest", manifest]), 0
+        )
 
 
 if __name__ == "__main__":
