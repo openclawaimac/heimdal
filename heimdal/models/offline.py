@@ -32,12 +32,12 @@ def _sentences(text: str) -> list[str]:
 
 
 def _trim_words(text: str, max_words: int | None) -> str:
-    if not max_words:
+    if max_words is None:
         return text
     words = text.split()
     if len(words) <= max_words:
         return text
-    return " ".join(words[: max_words])
+    return " ".join(words[: max(0, max_words)])
 
 
 class OfflineBackend(ModelBackend):
@@ -83,21 +83,30 @@ class OfflineBackend(ModelBackend):
     def _compose_markdown(
         self, title: str, instruction: str, truth: list[str], max_words: int | None
     ) -> str:
-        body_words_budget = (max_words - 8) if max_words else None
+        heading = f"## {title}"
+        # Reserve words for the heading and never let the budget go negative,
+        # so the whole response respects constraints.max_words even for small
+        # limits (a negative budget would slip text past _trim_words).
+        if max_words:
+            body_words_budget = max(0, max_words - len(heading.split()))
+        else:
+            body_words_budget = None
         if truth:
             sentences: list[str] = []
             for snippet in truth:
                 sentences.extend(_sentences(snippet))
             body = " ".join(sentences) if sentences else _clean(" ".join(truth))
-            body = _trim_words(body, body_words_budget)
         else:
             body = (
                 f"This response addresses the request: {instruction} "
                 "No grounding sources were supplied, so this is a structured "
                 "answer produced by the Heimdal offline backend."
             )
-            body = _trim_words(body, body_words_budget)
-        return f"## {title}\n\n{body}".strip()
+        body = _trim_words(body, body_words_budget)
+        composed = f"{heading}\n\n{body}".strip()
+        # Final guard: enforce the hard limit even when it is smaller than the
+        # heading itself (a degenerate but possible constraints.max_words).
+        return _trim_words(composed, max_words)
 
     def _compose_json(self, instruction: str, truth: list[str]) -> str:
         return json.dumps(

@@ -13,6 +13,7 @@ from heimdal.cli import build_parser
 from heimdal.core import model_router, verifier
 from heimdal.core.runtime import Runtime
 from heimdal.models.base import GenerationResult, ModelBackend, select_generative_model
+from heimdal.models.offline import OfflineBackend
 from heimdal.models.ollama import OllamaError, _describe_error
 
 
@@ -88,6 +89,34 @@ class OllamaErrorTests(unittest.TestCase):
 
     def test_ollama_error_is_runtime_error(self):
         self.assertTrue(issubclass(OllamaError, RuntimeError))
+
+
+class OfflineWordLimitTests(unittest.TestCase):
+    """Offline responses must respect constraints.max_words, even small limits."""
+
+    def test_small_word_limits_are_enforced(self):
+        backend = OfflineBackend()
+        long_truth = "This is a long grounding sentence. " * 30
+        for limit in (1, 3, 5, 8, 12, 40, 120):
+            result = backend.generate(
+                "",
+                structured={
+                    "title": "Demo task",
+                    "instruction": "Explain the system.",
+                    "truth": [long_truth],
+                    "max_words": limit,
+                },
+            )
+            self.assertLessEqual(
+                len(result.text.split()), limit, f"exceeded max_words={limit}"
+            )
+
+    def test_no_limit_leaves_text_untrimmed(self):
+        backend = OfflineBackend()
+        result = backend.generate(
+            "", structured={"title": "T", "instruction": "Explain.", "truth": []}
+        )
+        self.assertTrue(result.text.strip())
 
 
 class CLIOverrideTests(unittest.TestCase):
