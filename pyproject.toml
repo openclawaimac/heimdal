@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heimdal-engine"
+version = "0.2.0"
+description = "Heimdal Engine: a host-agnostic local agent engine with a quality-controlled orchestration runtime."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+heimdal = "heimdal.cli:main"
+
+[tool.setuptools]
+packages = [
+    "heimdal",
+    "heimdal.core",
+    "heimdal.models",
+    "heimdal.retrieval",
+    "heimdal.skills",
+    "heimdal.hardware",
+    "heimdal.sandbox",
+    "heimdal.adapters",
+]

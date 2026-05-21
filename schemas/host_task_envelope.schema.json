@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Host Task Envelope",
+  "type": "object",
+  "required": [
+    "host",
+    "role_binding",
+    "task_request"
+  ],
+  "properties": {
+    "host": {
+      "type": "object",
+      "required": [
+        "type",
+        "host_task_id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "openclaw",
+            "hermes",
+            "cli",
+            "rest",
+            "mcp"
+          ]
+        },
+        "host_task_id": {
+          "type": "string"
+        },
+        "source_agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "callback": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "role_binding": {
+      "type": "object"
+    },
+    "task_request": {
+      "type": "object"
+    },
+    "runtime_hints": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

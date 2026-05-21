@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Repro Pack",
+  "type": "object",
+  "required": [
+    "id",
+    "timestamp",
+    "models",
+    "params",
+    "hashes",
+    "versions"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "models": {
+      "type": "array"
+    },
+    "params": {
+      "type": "object"
+    },
+    "hashes": {
+      "type": "object"
+    },
+    "versions": {
+      "type": "object"
+    },
+    "hardware_profile": {
+      "type": "object"
+    },
+    "retrieval_refs": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,227 @@
+"""Hardware Profiler.
+
+Backs ``heimdal doctor``: detects OS, native Linux vs WSL2, CPU, RAM, disk
+class, Ollama reachability and installed models, GPUs/VRAM, CUDA, and Apple
+Silicon (docs/builder_pack/06_model_hardware/HARDWARE_PROFILER_REQUIREMENTS.md).
+"""
+
+from __future__ import annotations
+
+import os
+import platform
+import shutil
+import subprocess
+
+from heimdal.ids import now_iso
+from heimdal.models.ollama import OllamaBackend
+
+
+def is_wsl2() -> bool:
+    for path in ("/proc/version", "/proc/sys/kernel/osrelease"):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                content = fh.read().lower()
+        except OSError:
+            continue
+        if "microsoft" in content or "wsl" in content:
+            return True
+    return False
+
+
+def detect_os() -> dict:
+    system = platform.system()
+    flavour = system
+    if system == "Linux":
+        flavour = "wsl2" if is_wsl2() else "linux_native"
+    elif system == "Darwin":
+        flavour = "macos"
+    return {
+        "system": system,
+        "flavour": flavour,
+        "release": platform.release(),
+        "machine": platform.machine(),
+    }
+
+
+def detect_cpu() -> dict:
+    info = {"logical_cores": os.cpu_count() or 0, "model": platform.processor() or "unknown"}
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.lower().startswith("model name"):
+                    info["model"] = line.split(":", 1)[1].strip()
+                    break
+    except OSError:
+        pass
+    return info
+
+
+def detect_ram_gb() -> float:
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemTotal"):
+                    kb = int(line.split()[1])
+                    return round(kb / (1024 * 1024), 1)
+    except OSError:
+        pass
+    try:
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        return round(total / (1024 ** 3), 1)
+    except (ValueError, OSError, AttributeError):
+        return 0.0
+
+
+def detect_disk_class(path: str) -> str:
+    """Best-effort SSD/HDD detection via the rotational flag on Linux."""
+    sys_block = "/sys/block"
+    if not os.path.isdir(sys_block):
+        return "unknown"
+    rotational = False
+    found = False
+    for device in os.listdir(sys_block):
+        flag = os.path.join(sys_block, device, "queue", "rotational")
+        try:
+            with open(flag, "r", encoding="utf-8") as fh:
+                found = True
+                if fh.read().strip() == "1":
+                    rotational = True
+        except OSError:
+            continue
+    if not found:
+        return "unknown"
+    return "hdd" if rotational else "ssd_or_nvme"
+
+
+def detect_gpus() -> dict:
+    result = {"count": 0, "cuda": False, "metal": False, "devices": []}
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        result["metal"] = True
+    smi = shutil.which("nvidia-smi")
+    if smi:
+        try:
+            out = subprocess.run(
+                [smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if out.returncode == 0:
+                for line in out.stdout.strip().splitlines():
+                    name, _, mem = line.partition(",")
+                    result["devices"].append(
+                        {"name": name.strip(), "vram_mb": _safe_int(mem)}
+                    )
+                result["count"] = len(result["devices"])
+                result["cuda"] = result["count"] > 0
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return result
+
+
+def _safe_int(text: str) -> int:
+    try:
+        return int(float(text.strip()))
+    except (ValueError, AttributeError):
+        return 0
+
+
+def deployment_mode(gpu_count: int) -> str:
+    if gpu_count == 0:
+        return "Dev"
+    if gpu_count == 1:
+        return "Single Device"
+    if gpu_count <= 3:
+        return "Pipeline"
+    return "Factory"
+
+
+def detect_ollama(config) -> dict:
+    backend = OllamaBackend(
+        base_url=config.ollama.get("base_url", "http://localhost:11434"),
+        timeout=config.ollama.get("timeout_seconds", 120),
+    )
+    reachable = backend.is_available()
+    return {
+        "base_url": backend.base_url,
+        "reachable": reachable,
+        "models": backend.list_models() if reachable else [],
+    }
+
+
+def quick_profile(config) -> dict:
+    """Lightweight profile embedded in Repro Packs."""
+    gpus = detect_gpus()
+    os_info = detect_os()
+    return {
+        "os": os_info["flavour"],
+        "cpu_cores": detect_cpu()["logical_cores"],
+        "ram_gb": detect_ram_gb(),
+        "gpu_count": gpus["count"],
+        "deployment_mode": deployment_mode(gpus["count"]),
+    }
+
+
+def capability_tests(config, ollama: dict) -> list[dict]:
+    """Light model capability smoke tests; skipped when Ollama is unavailable."""
+    tests: list[dict] = []
+    if not ollama.get("reachable") or not ollama.get("models"):
+        return tests
+    backend = OllamaBackend(
+        base_url=config.ollama.get("base_url", "http://localhost:11434"),
+        timeout=config.ollama.get("timeout_seconds", 120),
+    )
+    model = ollama["models"][0]
+    try:
+        gen = backend.generate(
+            "Reply with the single word: OK", model=model, max_tokens=8
+        )
+        tests.append(
+            {"name": "basic_generation", "model": model, "passed": bool(gen.text.strip())}
+        )
+    except (RuntimeError, OSError) as exc:
+        tests.append({"name": "basic_generation", "model": model, "passed": False, "error": str(exc)})
+    try:
+        gen = backend.generate(
+            'Return JSON: {"ok": true}', model=model, json_mode=True, max_tokens=32
+        )
+        import json as _json
+
+        _json.loads(gen.text)
+        tests.append({"name": "json_output", "model": model, "passed": True})
+    except (RuntimeError, OSError, ValueError) as exc:
+        tests.append({"name": "json_output", "model": model, "passed": False, "error": str(exc)})
+    return tests
+
+
+def full_profile(config, run_capability_tests: bool = True) -> dict:
+    """Full hardware + model profile written by ``heimdal doctor``."""
+    os_info = detect_os()
+    gpus = detect_gpus()
+    ollama = detect_ollama(config)
+    profile = {
+        "timestamp": now_iso(),
+        "os": os_info,
+        "cpu": detect_cpu(),
+        "ram_gb": detect_ram_gb(),
+        "disk_class": detect_disk_class(config.storage_root),
+        "gpu": gpus,
+        "ollama": ollama,
+        "deployment_mode": deployment_mode(gpus["count"]),
+        "python": platform.python_version(),
+        "warnings": [],
+        "capability_tests": [],
+    }
+    if not ollama["reachable"]:
+        profile["warnings"].append(
+            "Ollama is not reachable; Heimdal will use the offline backend."
+        )
+    elif not ollama["models"]:
+        profile["warnings"].append(
+            "Ollama is reachable but has no installed models."
+        )
+    if gpus["count"] == 0:
+        profile["warnings"].append("No GPU detected; running in CPU/Dev mode.")
+    if run_capability_tests:
+        profile["capability_tests"] = capability_tests(config, ollama)
+    return profile

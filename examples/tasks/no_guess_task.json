@@ -1,0 +1,33 @@
+{
+  "host": {
+    "type": "cli",
+    "host_task_id": "example-002",
+    "source_agent": null,
+    "callback": {}
+  },
+  "role_binding": {
+    "role_id": "research",
+    "risk_mode": "conservative",
+    "privacy_mode": "local_only",
+    "output_profiles": [
+      "markdown"
+    ]
+  },
+  "task_request": {
+    "task_id": "example-002",
+    "title": "Source required task",
+    "instruction": "State the exact pricing policy for Product X.",
+    "inputs": {},
+    "constraints": {
+      "requires_sources": true
+    },
+    "priority": "P1",
+    "budget": {
+      "quality_level": "B2"
+    },
+    "expected_outputs": [
+      "markdown_response_with_sources"
+    ]
+  },
+  "runtime_hints": {}
+}

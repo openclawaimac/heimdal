@@ -1,0 +1,12 @@
+[
+  {"id": "must_01", "instruction": "Using local sources, summarize Heimdal's Work, Dream, and Mirror modes.", "role_id": "research", "quality_level": "B2", "constraints": {"max_words": 150}, "expect_status": "pass"},
+  {"id": "must_02", "instruction": "Explain what Heimdal Engine is in two short sentences.", "role_id": "general", "constraints": {"max_words": 90}, "expect_status": "pass"},
+  {"id": "must_03", "instruction": "Write a short note explaining what a Task Contract is in general terms.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_04", "instruction": "Explain the value of verifying an answer before returning it.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_05", "instruction": "Describe what host-agnostic design means.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_06", "instruction": "Explain why a No-Guess approach matters for factual tasks.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_07", "instruction": "Summarize what a Repro Pack is meant to capture.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_08", "instruction": "Describe what a Trace Pack records about a run.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_09", "instruction": "Explain what an adapter layer does between two systems.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "must_10", "instruction": "Describe what hardware-aware scheduling means.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"}
+]

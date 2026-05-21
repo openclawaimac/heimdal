@@ -1,0 +1,32 @@
+version: 0.2
+runtime:
+  default_backend: ollama
+  storage_root: ./storage
+  privacy_mode: local_only
+ollama:
+  base_url: ${OLLAMA_HOST:-http://localhost:11434}
+  timeout_seconds: 120
+model_profiles:
+  verifier:
+    candidates: [qwen3:4b, qwen2.5:3b, gemma3:4b]
+    required_capabilities: [json_output]
+  worker:
+    candidates: [qwen3:8b, qwen2.5:7b, gemma3:12b]
+    required_capabilities: [basic_generation, json_output]
+  brain:
+    candidates: [qwen3:14b, qwen2.5:14b, cloud:optional]
+    required_capabilities: [planning, long_context_smoke]
+  coder:
+    candidates: [qwen3-coder:30b, qwen2.5-coder:14b]
+    required_capabilities: [code_generation, json_output]
+scheduler:
+  work_preempts_background: true
+  dream_enabled: false
+  mirror_enabled: false
+budgets:
+  default_quality_level: B1
+  max_repair_iterations: 2
+  max_input_tokens: 8000
+  max_output_tokens: 2000
+sandbox:
+  policy_file: config/sandbox_policy.yml

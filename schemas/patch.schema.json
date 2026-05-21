@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Patch",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "channel",
+    "target",
+    "change",
+    "rationale",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "prompt_patch",
+        "rubric_patch",
+        "skill_patch",
+        "retrieval_patch",
+        "scheduler_patch",
+        "sandbox_patch",
+        "model_profile_patch"
+      ]
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "experimental",
+        "beta",
+        "stable",
+        "rejected"
+      ]
+    },
+    "target": {
+      "type": "string"
+    },
+    "change": {
+      "type": "object"
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "eval_run": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}
