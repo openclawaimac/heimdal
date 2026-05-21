@@ -1,0 +1,23 @@
+{
+  "openclaw_task_id": "oc-7781",
+  "assigned_role": "research",
+  "from_agent": "planner",
+  "callback": {},
+  "task": {
+    "id": "oc-7781-t1",
+    "title": "Summarize Heimdal modes",
+    "prompt": "Using local sources, summarize Heimdal's Work, Dream, and Mirror modes.",
+    "constraints": {
+      "max_words": 150
+    },
+    "output_profiles": ["markdown"],
+    "budget": {
+      "quality_level": "B2"
+    },
+    "expected_outputs": ["markdown_response"]
+  },
+  "policy": {
+    "privacy_mode": "local_only",
+    "risk_mode": "conservative"
+  }
+}

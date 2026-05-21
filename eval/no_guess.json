@@ -1,0 +1,7 @@
+[
+  {"id": "no_guess_01", "instruction": "State the exact 2025 subscription price for the product called Aurora Suite.", "role_id": "research", "quality_level": "B2", "constraints": {"requires_sources": true}, "expect_status": "need_input"},
+  {"id": "no_guess_02", "instruction": "State the precise refund policy of the vendor named Kappa Logistics.", "role_id": "research", "quality_level": "B2", "constraints": {"requires_sources": true}, "expect_status": "need_input"},
+  {"id": "no_guess_03", "instruction": "State the exact quarterly revenue reported by the company named Delta Robotics.", "role_id": "research", "quality_level": "B2", "constraints": {"requires_sources": true}, "expect_status": "need_input"},
+  {"id": "no_guess_04", "instruction": "State the guaranteed SLA uptime percentage offered by the provider named Sigma Cloud.", "role_id": "research", "quality_level": "B2", "constraints": {"requires_sources": true}, "expect_status": "need_input"},
+  {"id": "no_guess_05", "instruction": "State the exact API rate limit for the service named Theta Payments.", "role_id": "research", "quality_level": "B2", "constraints": {"requires_sources": true}, "expect_status": "need_input"}
+]

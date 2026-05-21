@@ -1,0 +1,6 @@
+{
+  "id": "patch_example_bad",
+  "type": "magic_patch",
+  "channel": "production",
+  "rationale": "This patch is missing required fields and uses values outside the allowed enums."
+}

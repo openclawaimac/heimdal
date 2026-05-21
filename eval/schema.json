@@ -1,0 +1,7 @@
+[
+  {"id": "schema_01", "instruction": "Return a JSON object describing a simple to-do item.", "role_id": "general", "output_profiles": ["json"], "expected_outputs": ["json_response"], "expect_status": "pass"},
+  {"id": "schema_02", "instruction": "Return a JSON object summarizing a task status.", "role_id": "general", "output_profiles": ["json"], "expected_outputs": ["json_response"], "expect_status": "pass"},
+  {"id": "schema_03", "instruction": "Return a JSON object describing a configuration setting.", "role_id": "general", "output_profiles": ["json"], "expected_outputs": ["json_response"], "expect_status": "pass"},
+  {"id": "schema_04", "instruction": "Return a JSON object with a short answer field.", "role_id": "general", "output_profiles": ["json"], "expected_outputs": ["json_response"], "expect_status": "pass"},
+  {"id": "schema_05", "instruction": "Return a JSON object describing a single log event.", "role_id": "general", "output_profiles": ["json"], "expected_outputs": ["json_response"], "expect_status": "pass"}
+]

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Task Contract",
+  "type": "object",
+  "required": [
+    "contract_id",
+    "task_id",
+    "role_id",
+    "objective",
+    "definition_of_done",
+    "budget",
+    "verification"
+  ],
+  "properties": {
+    "contract_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "role_id": {
+      "type": "string"
+    },
+    "objective": {
+      "type": "string"
+    },
+    "definition_of_done": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expected_outputs": {
+      "type": "array"
+    },
+    "constraints": {
+      "type": "object"
+    },
+    "required_sources": {
+      "type": "array"
+    },
+    "tool_requirements": {
+      "type": "array"
+    },
+    "risk_profile": {
+      "type": "object"
+    },
+    "budget": {
+      "type": "object"
+    },
+    "verification": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

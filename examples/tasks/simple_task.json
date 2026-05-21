@@ -1,0 +1,33 @@
+{
+  "host": {
+    "type": "cli",
+    "host_task_id": "example-001",
+    "source_agent": null,
+    "callback": {}
+  },
+  "role_binding": {
+    "role_id": "general",
+    "risk_mode": "balanced",
+    "privacy_mode": "local_only",
+    "output_profiles": [
+      "markdown"
+    ]
+  },
+  "task_request": {
+    "task_id": "example-001",
+    "title": "Demo task",
+    "instruction": "Write a short explanation of what Heimdal Engine is.",
+    "inputs": {},
+    "constraints": {
+      "max_words": 120
+    },
+    "priority": "P2",
+    "budget": {
+      "quality_level": "B1"
+    },
+    "expected_outputs": [
+      "markdown_response"
+    ]
+  },
+  "runtime_hints": {}
+}

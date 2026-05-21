@@ -1,0 +1,22 @@
+[
+  {"id": "smoke_01", "instruction": "Explain what a checklist is and why it helps.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_02", "instruction": "Describe the difference between a list and a queue.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_03", "instruction": "Summarize the benefits of writing unit tests.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_04", "instruction": "Explain what version control is in simple terms.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_05", "instruction": "Describe what a configuration file does.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_06", "instruction": "Explain the purpose of logging in software.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_07", "instruction": "Describe what an API is at a high level.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_08", "instruction": "Explain what caching is and when it helps.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_09", "instruction": "Summarize why code review is useful.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_10", "instruction": "Describe what a timeout is in networking.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_11", "instruction": "Explain the idea of a retry with backoff.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_12", "instruction": "Describe what a schema is for structured data.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_13", "instruction": "Explain what a command-line interface is.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_14", "instruction": "Summarize what reproducibility means in computing.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_15", "instruction": "Describe the role of documentation in a project.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_16", "instruction": "Explain what a feature flag is.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_17", "instruction": "Describe what a sandbox is in software security.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_18", "instruction": "Explain what idempotency means.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_19", "instruction": "Describe what a dependency is in a software project.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"},
+  {"id": "smoke_20", "instruction": "Summarize why small commits are preferable.", "role_id": "general", "constraints": {"max_words": 120}, "expect_status": "pass"}
+]

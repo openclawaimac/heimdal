@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Context Packet",
+  "type": "object",
+  "required": [
+    "packet_id",
+    "contract_id",
+    "role_context",
+    "truth_context",
+    "working_state",
+    "task_context",
+    "budget"
+  ],
+  "properties": {
+    "packet_id": {
+      "type": "string"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "role_context": {
+      "type": "object"
+    },
+    "truth_context": {
+      "type": "array"
+    },
+    "working_state": {
+      "type": "object"
+    },
+    "task_context": {
+      "type": "object"
+    },
+    "experience_context": {
+      "type": "array"
+    },
+    "skills_context": {
+      "type": "array"
+    },
+    "budget": {
+      "type": "object"
+    },
+    "hashes": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
