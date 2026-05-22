@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Semantic Verification Result",
+  "type": "object",
+  "required": [
+    "status",
+    "score",
+    "confidence",
+    "defects",
+    "rationale_short"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "rationale_short": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

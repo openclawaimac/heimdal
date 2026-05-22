@@ -37,10 +37,12 @@ retrieval:
   top_k: 3
   min_score: 0.0
 verifier:
-  # Rule-based verification always runs. When semantic verification is enabled,
-  # a model-based semantic check runs first for tasks at or above the minimum
-  # budget, then the rule-based checks run on top.
-  semantic_enabled: false
-  semantic_min_budget: B2
+  # Verification gate. rule_based (default) runs only the deterministic
+  # verifier. hybrid additionally runs a model-based semantic verifier for
+  # B2-B4 tasks, after the rule-based gate passes. The semantic verifier is
+  # an extra quality layer and never overrides a deterministic hard fail.
+  mode: rule_based
+  semantic_model_verifier_enabled: false
+  semantic_verifier_model: null
 sandbox:
   policy_file: config/sandbox_policy.yml

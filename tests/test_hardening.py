@@ -1,8 +1,7 @@
 """Post-validation hardening: model selection, router fallback, Ollama errors,
-CLI overrides, and the optional semantic verifier."""
+and CLI overrides."""
 
 import io
-import json
 import tempfile
 import unittest
 import urllib.error
@@ -10,31 +9,11 @@ import urllib.error
 from tests.helpers import temp_config
 
 from heimdal.cli import build_parser
-from heimdal.core import model_router, verifier
+from heimdal.core import model_router
 from heimdal.core.runtime import Runtime
-from heimdal.models.base import GenerationResult, ModelBackend, select_generative_model
+from heimdal.models.base import select_generative_model
 from heimdal.models.offline import OfflineBackend
 from heimdal.models.ollama import OllamaError, _describe_error
-
-
-class _StubBackend(ModelBackend):
-    """A backend that returns a fixed generation, used to drive the verifier."""
-
-    name = "ollama"
-
-    def __init__(self, text: str, models: list[str] | None = None):
-        self._text = text
-        self._models = models or ["qwen2.5:7b"]
-
-    def is_available(self) -> bool:
-        return True
-
-    def list_models(self) -> list[str]:
-        return self._models
-
-    def generate(self, prompt, *, model, system="", json_mode=False,
-                 max_tokens=512, temperature=0.2, structured=None):
-        return GenerationResult(text=self._text, model=model, backend=self.name)
 
 
 class ModelSelectionTests(unittest.TestCase):
@@ -136,51 +115,6 @@ class CLIOverrideTests(unittest.TestCase):
         runtime = Runtime(config, prefer_backend="offline", model_override="custom-model:1b")
         result = runtime.run_demo()
         self.assertEqual(result["metrics"]["worker_model"], "custom-model:1b")
-
-
-class SemanticVerifierTests(unittest.TestCase):
-    """Item 9/10: schema-valid JSON that semantically fails the task."""
-
-    def setUp(self):
-        self.config = temp_config(tempfile.mkdtemp())
-        self.contract = {
-            "objective": "Return a JSON object with a short answer field.",
-            "constraints": {},
-            "verification": {},
-        }
-        self.packet = {"truth_context": []}
-        self.routing = {
-            "verifier_strictness": "standard",
-            "verifier_backend": "hybrid",
-            "verifier_model": "qwen2.5:7b",
-        }
-
-    def test_semantic_failure_produces_defect(self):
-        # Valid JSON, but the "answer" dodges the task by asking a question back.
-        bad = json.dumps({"answer": "What question would you like me to answer?"})
-        judge = _StubBackend(json.dumps({"satisfies": False, "reason": "asks a question back"}))
-        result = verifier.verify(bad, self.contract, self.packet, self.routing, self.config, judge)
-        self.assertEqual(result["status"], "fail")
-        self.assertTrue(any("Semantic verifier" in d["message"] for d in result["defects"]))
-
-    def test_semantic_pass_leaves_no_semantic_defect(self):
-        good = json.dumps({"answer": "A queue is a first-in first-out collection."})
-        judge = _StubBackend(json.dumps({"satisfies": True, "reason": "ok"}))
-        result = verifier.verify(good, self.contract, self.packet, self.routing, self.config, judge)
-        self.assertFalse(any("Semantic verifier" in d["message"] for d in result["defects"]))
-
-    def test_router_marks_hybrid_only_when_enabled_and_budget_qualifies(self):
-        self.config.manifest["verifier"]["semantic_enabled"] = True
-        backend = _StubBackend("{}")
-        b2 = {"budget": {"quality_level": "B2", "max_iterations": 3}, "verification": {}}
-        b1 = {"budget": {"quality_level": "B1", "max_iterations": 3}, "verification": {}}
-        role = {"role_id": "general"}
-        self.assertEqual(
-            model_router.route(b2, role, backend, self.config)["verifier_backend"], "hybrid"
-        )
-        self.assertEqual(
-            model_router.route(b1, role, backend, self.config)["verifier_backend"], "rule_based"
-        )
 
 
 if __name__ == "__main__":

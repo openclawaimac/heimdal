@@ -54,8 +54,19 @@ def _resolve_model(profile_name: str, installed: set[str] | None, config) -> str
     )
 
 
-def route(contract: dict, role: dict, backend, config, model_override: str | None = None) -> dict:
-    """Return a routing decision for a contract."""
+def route(
+    contract: dict,
+    role: dict,
+    backend,
+    config,
+    model_override: str | None = None,
+    verifier_override: str | None = None,
+) -> dict:
+    """Return a routing decision for a contract.
+
+    ``verifier_override`` ('rule_based' | 'hybrid') overrides the manifest
+    verifier mode for this run.
+    """
     quality_level = contract.get("budget", {}).get("quality_level", "B1")
     behaviour = dict(BUDGET_BEHAVIOUR.get(quality_level, BUDGET_BEHAVIOUR["B1"]))
 
@@ -79,19 +90,23 @@ def route(contract: dict, role: dict, backend, config, model_override: str | Non
     else:
         worker_model = _resolve_model(worker_profile, installed, config)
 
-    # Verification is rule-based by default; the semantic (model-based) check
-    # is opt-in via the manifest and only for higher budgets on a real backend.
+    # Verification is rule-based by default. Hybrid adds a model-based semantic
+    # verifier for B2-B4 tasks; the offline backend mocks it deterministically.
     verifier_cfg = config.verifier
-    semantic = (
-        verifier_cfg.get("semantic_enabled", False)
-        and not is_offline
-        and _budget_at_least(quality_level, verifier_cfg.get("semantic_min_budget", "B2"))
+    mode = verifier_override or verifier_cfg.get("mode", RULE_BASED)
+    hybrid_requested = mode == HYBRID or verifier_cfg.get(
+        "semantic_model_verifier_enabled", False
     )
-    verifier_backend = HYBRID if semantic else RULE_BASED
-    if semantic:
-        verifier_model = model_override or _resolve_model("verifier", installed, config)
+    hybrid = hybrid_requested and _budget_at_least(quality_level, "B2")
+    verifier_backend = HYBRID if hybrid else RULE_BASED
+
+    if hybrid:
+        semantic_verifier_model = (
+            verifier_cfg.get("semantic_verifier_model")
+            or _resolve_model("verifier", installed, config)
+        )
     else:
-        verifier_model = None
+        semantic_verifier_model = None
 
     return {
         "quality_level": quality_level,
@@ -99,7 +114,7 @@ def route(contract: dict, role: dict, backend, config, model_override: str | Non
         "worker_model": worker_model,
         "brain_profile": brain_profile,
         "verifier_backend": verifier_backend,
-        "verifier_model": verifier_model,
+        "semantic_verifier_model": semantic_verifier_model,
         "verifier_strictness": behaviour["verifier_strictness"],
         "retrieval_required": behaviour["retrieval"],
         "samples": behaviour["samples"],

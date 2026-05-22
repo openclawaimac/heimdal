@@ -49,9 +49,17 @@ manifest candidate and skips embedding models; if no candidate is installed it
 falls back to an installed generative model or fails with an actionable
 `ollama pull` hint.
 
-Verification is rule-based by default. An optional model-based **semantic
-verifier** can be enabled in `config/heimdal.manifest.yml` (`verifier.semantic_enabled`)
-for B2-B4 tasks; rule-based checks always run as well.
+### Verifier
+
+Verification is **rule-based** by default. A **hybrid** mode adds an optional
+model-based *semantic verifier* for B2-B4 tasks — set `verifier.mode: hybrid`
+in `config/heimdal.manifest.yml`, or pass `--verifier hybrid` to `run` / `eval`.
+
+The gate order is fixed: (1) deterministic rule-based verifier, (2) optional
+model-based semantic verifier, (3) final deterministic check. A deterministic
+hard fail short-circuits before the model verifier runs — the semantic verifier
+is an extra quality layer and can never override a deterministic fail. The
+offline backend mocks the semantic verifier deterministically.
 
 ## How a task flows
 

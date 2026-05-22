@@ -26,7 +26,15 @@ def _worker_prompt_with_defects(prompt: str, defects: list[dict]) -> str:
 
 
 def run_quality_factory(
-    contract, role, envelope, backend, storage, config, trace, model_override=None
+    contract,
+    role,
+    envelope,
+    backend,
+    storage,
+    config,
+    trace,
+    model_override=None,
+    verifier_override=None,
 ) -> dict:
     """Execute the Quality Factory pipeline for one Work Mode task."""
     trace.event("contract_ready", contract_id=contract["contract_id"])
@@ -39,7 +47,9 @@ def run_quality_factory(
         skills=[s["skill_id"] for s in packet["skills_context"]],
     )
 
-    routing = model_router.route(contract, role, backend, config, model_override)
+    routing = model_router.route(
+        contract, role, backend, config, model_override, verifier_override
+    )
     trace.event("routing", **routing)
 
     verification = contract.get("verification", {})
@@ -98,8 +108,19 @@ def run_quality_factory(
         )
         return result
 
-    def check(text: str):
-        return verifier.verify(text, contract, packet, routing, config, backend)
+    def check(text: str, **trace_kw):
+        result = verifier.verify(text, contract, packet, routing, config, backend)
+        semantic = result.get("semantic")
+        if semantic is not None:
+            trace.event(
+                "semantic_verify",
+                semantic_verifier_model=semantic["model"],
+                semantic_verifier_status=semantic["status"],
+                semantic_verifier_score=semantic["score"],
+                semantic_verifier_confidence=semantic["confidence"],
+            )
+        trace.event("verify", status=result["status"], score=result["score"], **trace_kw)
+        return result
 
     # Route the backend's request events into this run's Trace Pack.
     backend.event_sink = trace.event
@@ -112,10 +133,7 @@ def run_quality_factory(
             trace.event(
                 "worker_draft", sample=sample, model=result.model, latency_ms=result.latency_ms
             )
-            candidate = check(result.text)
-            trace.event(
-                "verify", sample=sample, status=candidate["status"], score=candidate["score"]
-            )
+            candidate = check(result.text, sample=sample)
             if best_verification is None or candidate["score"] > best_verification["score"]:
                 best_text, best_verification = result.text, candidate
             if candidate["status"] == PASS:
@@ -129,13 +147,7 @@ def run_quality_factory(
             repair_iterations += 1
             result = draft(base_prompt, best_verification["defects"])
             trace.event("repair", iteration=repair_iterations, model=result.model)
-            repaired = check(result.text)
-            trace.event(
-                "verify",
-                repair=repair_iterations,
-                status=repaired["status"],
-                score=repaired["score"],
-            )
+            repaired = check(result.text, repair=repair_iterations)
             if repaired["score"] >= best_verification["score"]:
                 best_text, best_verification = result.text, repaired
             if repaired["status"] == PASS:
@@ -145,7 +157,11 @@ def run_quality_factory(
 
     if routing["verifier_backend"] == HYBRID:
         models_used.append(
-            {"role": "verifier", "model": routing["verifier_model"], "backend": backend.name}
+            {
+                "role": "semantic_verifier",
+                "model": routing["semantic_verifier_model"],
+                "backend": backend.name,
+            }
         )
 
     status = PASS if best_verification["status"] == PASS else FAIL

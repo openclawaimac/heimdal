@@ -47,12 +47,14 @@ class Runtime:
         config: Config | None = None,
         prefer_backend: str | None = None,
         model_override: str | None = None,
+        verifier_override: str | None = None,
     ):
         self.config = config or load_config()
         self.storage = Storage(self.config.storage_root).ensure()
         _seed_storage(self.storage)
         self.backend = select_backend(self.config, prefer=prefer_backend)
         self.model_override = model_override
+        self.verifier_override = verifier_override
         self.scheduler = Scheduler(self.config)
         # Hardware does not change during a session; profile once and reuse.
         self.hardware_profile = quick_profile(self.config)
@@ -93,6 +95,7 @@ class Runtime:
             self.config,
             trace,
             model_override=self.model_override,
+            verifier_override=self.verifier_override,
         )
 
         run_id = new_id("run")
@@ -107,7 +110,7 @@ class Runtime:
             "quality_level": routing["quality_level"],
             "worker_model": routing["worker_model"],
             "verifier_backend": routing["verifier_backend"],
-            "verifier_model": routing["verifier_model"],
+            "semantic_verifier_model": routing["semantic_verifier_model"],
         }
 
         repro = repro_trace.build_repro_pack(
@@ -116,7 +119,7 @@ class Runtime:
                 "quality_level": routing["quality_level"],
                 "verifier_strictness": routing["verifier_strictness"],
                 "verifier_backend": routing["verifier_backend"],
-                "verifier_model": routing["verifier_model"],
+                "semantic_verifier_model": routing["semantic_verifier_model"],
                 "worker_model": routing["worker_model"],
                 "samples": routing["samples"],
                 "max_repair_iterations": routing["max_repair_iterations"],

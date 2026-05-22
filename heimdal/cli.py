@@ -84,7 +84,10 @@ def cmd_doctor(args) -> int:
 def cmd_run(args) -> int:
     config = load_config(args.manifest)
     runtime = Runtime(
-        config, prefer_backend=_prefer_backend(args), model_override=args.model
+        config,
+        prefer_backend=_prefer_backend(args),
+        model_override=args.model,
+        verifier_override=args.verifier,
     )
     adapter = CLIAdapter()
 
@@ -108,7 +111,10 @@ def cmd_run(args) -> int:
 def cmd_eval(args) -> int:
     config = load_config(args.manifest)
     runtime = Runtime(
-        config, prefer_backend=_prefer_backend(args), model_override=args.model
+        config,
+        prefer_backend=_prefer_backend(args),
+        model_override=args.model,
+        verifier_override=args.verifier,
     )
     summary = eval_runner.run_evals(runtime)
     if args.json:
@@ -242,6 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--offline", action="store_true", help="force the offline backend")
     p_run.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
     p_run.add_argument("--model", help="override the worker model")
+    p_run.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="override the verifier mode"
+    )
     p_run.add_argument("--json", action="store_true", help="emit the Result Envelope as JSON")
     p_run.add_argument("--manifest", help="path to the Heimdal manifest")
     p_run.set_defaults(func=cmd_run)
@@ -251,6 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--offline", action="store_true", help="force the offline backend")
     p_eval.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
     p_eval.add_argument("--model", help="override the worker model")
+    p_eval.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="override the verifier mode"
+    )
     p_eval.add_argument("--json", action="store_true", help="emit JSON")
     p_eval.add_argument("--manifest", help="path to the Heimdal manifest")
     p_eval.set_defaults(func=cmd_eval)

@@ -98,7 +98,7 @@ def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
         "backend": backend,
         "worker_model": sample_metrics.get("worker_model"),
         "verifier_backend": sample_metrics.get("verifier_backend"),
-        "verifier_model": sample_metrics.get("verifier_model"),
+        "semantic_verifier_model": sample_metrics.get("semantic_verifier_model"),
         "ollama_endpoint": (
             runtime.config.ollama.get("base_url") if backend == "ollama" else None
         ),

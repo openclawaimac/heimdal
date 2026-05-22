@@ -40,6 +40,35 @@ def _trim_words(text: str, max_words: int | None) -> str:
     return " ".join(words[: max(0, max_words)])
 
 
+def _mock_semantic_judgment(answer: str) -> str:
+    """Deterministic stand-in for a model-based semantic verifier.
+
+    Flags an answer as semantically failing when it is empty or dodges the
+    task by asking a question back; otherwise it passes.
+    """
+    text = (answer or "").strip()
+    dodges = (not text) or ("?" in text and len(text.split()) < 15)
+    if dodges:
+        judgment = {
+            "status": "fail",
+            "score": 0.2,
+            "confidence": 0.7,
+            "defects": [
+                {"severity": "high", "message": "Response does not fulfil the task."}
+            ],
+            "rationale_short": "answer is empty or dodges the task",
+        }
+    else:
+        judgment = {
+            "status": "pass",
+            "score": 0.9,
+            "confidence": 0.7,
+            "defects": [],
+            "rationale_short": "answer addresses the task",
+        }
+    return json.dumps(judgment)
+
+
 class OfflineBackend(ModelBackend):
     name = "offline"
 
@@ -61,6 +90,17 @@ class OfflineBackend(ModelBackend):
         structured: dict | None = None,
     ) -> GenerationResult:
         s = structured or {}
+
+        # Deterministic mock of a model-based semantic verifier, so the hybrid
+        # verifier path is exercisable offline (v0.2.3).
+        if s.get("verify_task") == "semantic":
+            return GenerationResult(
+                text=_mock_semantic_judgment(s.get("answer", "")),
+                model=OFFLINE_MODEL,
+                backend=self.name,
+                raw={"deterministic": True, "semantic_mock": True},
+            )
+
         instruction = (s.get("instruction") or prompt or "").strip()
         title = s.get("title") or "Heimdal Response"
         truth: list[str] = s.get("truth") or []
