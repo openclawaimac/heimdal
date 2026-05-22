@@ -6,10 +6,16 @@ Pack (the ordered events of the run). Schemas live in docs/builder_pack/03_schem
 
 from __future__ import annotations
 
+import os
 import platform
 
 from heimdal import __version__, jsonschema_min
 from heimdal.ids import new_id, now_iso
+
+
+def trace_event(name: str, **data) -> dict:
+    """Build a single ordered trace event: ``{ts, name, data}``."""
+    return {"ts": now_iso(), "name": name, "data": data}
 
 
 class TraceBuilder:
@@ -21,7 +27,7 @@ class TraceBuilder:
         self.events: list[dict] = []
 
     def event(self, name: str, **data) -> None:
-        self.events.append({"ts": now_iso(), "name": name, "data": data})
+        self.events.append(trace_event(name, **data))
 
     def build(self, status: str, metrics: dict) -> dict:
         return {
@@ -72,3 +78,20 @@ def write_packs(storage, config, repro: dict, trace: dict) -> dict:
         f"logs/trace_packs/{trace['id']}.json", trace
     )
     return {"repro_pack": repro_path, "trace_pack": trace_path}
+
+
+def append_trace_events(storage, config, trace_path: str, events: list[dict]) -> None:
+    """Fold post-run events into an already-written Trace Pack.
+
+    Some events (notably host callback delivery) happen after the runtime has
+    finished writing the Trace Pack. Re-opening the pack to append them keeps
+    the trace a complete, ordered record of the run.
+    """
+    if not events:
+        return
+    trace = storage.read_json(trace_path)
+    trace.setdefault("events", []).extend(events)
+    jsonschema_min.validate_or_raise(
+        trace, config.schema_path("trace_pack.schema.json"), "Trace Pack"
+    )
+    storage.write_json(os.path.relpath(trace_path, storage.root), trace)

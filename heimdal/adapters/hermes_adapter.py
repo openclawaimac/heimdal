@@ -14,6 +14,7 @@ orchestrates; orchestration lives in heimdal/adapters/hermes_host.py.
 from __future__ import annotations
 
 from heimdal.adapters.base import HostAdapter
+from heimdal.adapters.host_support import host_safe_artifacts, host_safe_ref
 from heimdal.ids import new_id
 
 
@@ -77,7 +78,9 @@ class HermesAdapter(HostAdapter):
 
         Presents Heimdal as one agent: status, message, artifacts, pack
         references and verifier metadata only -- never the internal sub-agent
-        graph (router/worker/repair).
+        graph (router/worker/repair). Artifact and pack references are reduced
+        to host-safe relative refs so the external result never exposes
+        absolute internal filesystem paths.
         """
         metrics = result.get("metrics", {}) or {}
         return {
@@ -86,9 +89,9 @@ class HermesAdapter(HostAdapter):
             "status": result.get("status", "fail"),
             "message": result.get("message", ""),
             "questions": result.get("questions", []),
-            "artifacts": result.get("artifacts", []),
-            "repro_pack_ref": result.get("repro_pack", {}).get("path"),
-            "trace_pack_ref": result.get("trace_pack", {}).get("path"),
+            "artifacts": host_safe_artifacts(result.get("artifacts", [])),
+            "repro_pack_ref": host_safe_ref(result.get("repro_pack", {}).get("path")),
+            "trace_pack_ref": host_safe_ref(result.get("trace_pack", {}).get("path")),
             "verifier": {
                 "backend": metrics.get("verifier_backend"),
                 "semantic_model": metrics.get("semantic_verifier_model"),

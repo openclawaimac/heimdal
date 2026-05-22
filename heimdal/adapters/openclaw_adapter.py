@@ -10,6 +10,7 @@ only; it never addresses Heimdal's Router/Worker/Verifier directly
 from __future__ import annotations
 
 from heimdal.adapters.base import HostAdapter
+from heimdal.adapters.host_support import host_safe_artifacts, host_safe_ref
 from heimdal.ids import new_id
 
 
@@ -64,15 +65,19 @@ class OpenClawAdapter(HostAdapter):
         }
 
     def from_heimdal_result(self, result: dict) -> dict:
-        """Map a Heimdal Result Envelope back into an OpenClaw-style result."""
+        """Map a Heimdal Result Envelope back into an OpenClaw-style result.
+
+        Artifact and pack references are reduced to host-safe relative refs so
+        the external result never exposes absolute internal filesystem paths.
+        """
         return {
             "openclaw_task_id": result.get("host_task_id", ""),
             "heimdal_task_id": result.get("task_id", ""),
             "outcome": result.get("status", "fail"),
             "summary": result.get("message", ""),
             "questions": result.get("questions", []),
-            "artifacts": result.get("artifacts", []),
-            "repro_pack_ref": result.get("repro_pack", {}).get("path"),
-            "trace_pack_ref": result.get("trace_pack", {}).get("path"),
+            "artifacts": host_safe_artifacts(result.get("artifacts", [])),
+            "repro_pack_ref": host_safe_ref(result.get("repro_pack", {}).get("path")),
+            "trace_pack_ref": host_safe_ref(result.get("trace_pack", {}).get("path")),
             "metrics": result.get("metrics", {}),
         }

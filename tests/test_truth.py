@@ -102,6 +102,16 @@ class TruthRetrievalTests(unittest.TestCase):
         hits = TruthStore(self.truth_dir).retrieve("widget pricing discount", k=2)
         self.assertEqual(len(hits), 2)
 
+    def test_grounding_coverage_separates_real_from_incidental(self):
+        from heimdal.retrieval.truth_store import grounding_coverage
+
+        objective = "State the refund policy for Product Zeta."
+        real = [{"text": "Product Zeta refund policy: full refund within 30 days."}]
+        incidental = [{"text": "A local agent runs on a single machine."}]
+        self.assertEqual(grounding_coverage(objective, real), 1.0)
+        self.assertLess(grounding_coverage(objective, incidental), 0.5)
+        self.assertEqual(grounding_coverage(objective, []), 0.0)
+
     def test_min_score_filters_weak_matches(self):
         _write(
             self.truth_dir,
@@ -162,6 +172,21 @@ class TruthGroundedRuntimeTests(unittest.TestCase):
         )
         result = runtime.run_envelope(
             _source_task("State the refund policy for Product Zeta.")
+        )
+        self.assertEqual(result["status"], "need_input")
+
+    def test_weak_keyword_overlap_still_returns_need_input(self):
+        # A vault document that shares only a couple of generic words with the
+        # task is not real grounding: the No-Guess Gate still asks for input
+        # rather than letting a thin keyword overlap pass as a source.
+        runtime = self._runtime(
+            {"misc.md": "Our refund policy team reviews customer returns weekly."}
+        )
+        result = runtime.run_envelope(
+            _source_task(
+                "State the published quarterly refund policy for retail "
+                "Product Zeta."
+            )
         )
         self.assertEqual(result["status"], "need_input")
 

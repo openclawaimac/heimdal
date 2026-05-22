@@ -13,6 +13,7 @@ from __future__ import annotations
 from heimdal.core import context_os, model_router, verifier
 from heimdal.core.constants import FAIL, HYBRID, NEED_INPUT, PASS
 from heimdal.core.task_contract import requires_grounding
+from heimdal.retrieval import truth_store
 
 
 def _worker_prompt_with_defects(prompt: str, defects: list[dict]) -> str:
@@ -54,37 +55,60 @@ def run_quality_factory(
 
     verification = contract.get("verification", {})
 
-    # No-Guess Gate: stop before the model call when a source-required task has
-    # no retrieved sources, and return need_input rather than guessing.
+    # No-Guess Gate: stop before the model call when a source-required task
+    # lacks sufficient grounding, and return need_input rather than guessing.
+    # "Sufficient" means more than an incidental keyword overlap -- a retrieved
+    # snippet must cover a real share of the task's content terms -- so a task
+    # whose source is missing returns need_input here, before the semantic
+    # verifier could mistake the model's honest hedge for a verification fail.
     needs_sources = verification.get("no_guess_gate") and requires_grounding(verification)
-    if needs_sources and not packet["truth_context"]:
-        trace.event("no_guess_gate", outcome=NEED_INPUT)
-        question = (
-            "This task requires grounded sources, but none were found in the local "
-            f"Truth Vault for: {contract['objective']!r}. Provide the source "
-            "document or reference so Heimdal can answer without guessing."
+    if needs_sources:
+        min_coverage = config.retrieval.get("min_grounding_coverage", 0.5)
+        coverage = truth_store.grounding_coverage(
+            contract["objective"], packet["truth_context"]
         )
-        return {
-            "status": NEED_INPUT,
-            "output_text": "",
-            "questions": [question],
-            "packet": packet,
-            "routing": routing,
-            "verification": {
-                "status": FAIL,
-                "score": 0.0,
-                "defects": [
-                    {
-                        "severity": "critical",
-                        "message": "No-Guess Gate: source-required task lacks sources.",
-                    }
-                ],
-                "missing_sources": ["local truth vault has no matching source"],
-                "schema_errors": [],
-            },
-            "repair_iterations": 0,
-            "models_used": [],
-        }
+        if not packet["truth_context"] or coverage < min_coverage:
+            if not packet["truth_context"]:
+                reason = "no truth sources retrieved for a source-required task"
+            else:
+                reason = (
+                    f"retrieved sources cover only {coverage:.0%} of the task's "
+                    f"key terms (minimum {min_coverage:.0%})"
+                )
+            trace.event(
+                "no_guess_gate",
+                outcome=NEED_INPUT,
+                reason=reason,
+                retrieval_refs=context_os.retrieval_refs(packet),
+            )
+            question = (
+                "This task requires grounded sources, but the local Truth Vault "
+                f"has no sufficient source for: {contract['objective']!r}. "
+                "Provide the source document or reference so Heimdal can answer "
+                "without guessing."
+            )
+            return {
+                "status": NEED_INPUT,
+                "output_text": "",
+                "questions": [question],
+                "packet": packet,
+                "routing": routing,
+                "verification": {
+                    "status": FAIL,
+                    "score": 0.0,
+                    "defects": [
+                        {
+                            "severity": "critical",
+                            "message": "No-Guess Gate: source-required task lacks "
+                            "sufficient grounding.",
+                        }
+                    ],
+                    "missing_sources": [reason],
+                    "schema_errors": [],
+                },
+                "repair_iterations": 0,
+                "models_used": [],
+            }
 
     base_prompt, structured = context_os.render_worker_input(packet, role)
     json_mode = structured.get("output_profile") == "json" or verification.get(

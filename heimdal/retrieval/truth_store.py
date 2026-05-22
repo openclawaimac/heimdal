@@ -23,6 +23,7 @@ _STOPWORDS = {
     "write", "explain", "describe", "state", "exact", "short", "by", "from",
     "at", "into", "named", "called", "using", "use", "about", "give", "list",
     "summarize", "provide", "precise", "guaranteed", "reported", "offered",
+    "only",
 }
 
 # Plain-text and markdown only (v0.2.2 Truth Vault scope).
@@ -55,6 +56,31 @@ class _Doc:
 def _tokens(text: str) -> list[str]:
     words = re.findall(r"[a-z0-9]+", text.lower())
     return [w for w in words if w not in _STOPWORDS and len(w) > 1]
+
+
+def content_terms(text: str) -> set[str]:
+    """The distinct content tokens of ``text`` (stopwords/1-char tokens removed)."""
+    return set(_tokens(text))
+
+
+def grounding_coverage(objective: str, truth_context) -> float:
+    """How well retrieved Truth Vault snippets cover a task's content terms.
+
+    Returns the fraction of the objective's distinct content terms that the
+    single best-matching retrieved snippet shares, in [0.0, 1.0]; 0.0 when
+    nothing relevant was retrieved. The No-Guess Gate uses this to tell genuine
+    grounding from an incidental keyword overlap -- e.g. a vault document that
+    merely shares a generic word like "local" with the instruction must not
+    count as a source for an unrelated factual question.
+    """
+    query_terms = content_terms(objective)
+    if not query_terms:
+        return 0.0
+    best = 0
+    for snippet in truth_context or []:
+        overlap = query_terms & content_terms(snippet.get("text", ""))
+        best = max(best, len(overlap))
+    return best / len(query_terms)
 
 
 class TruthStore:

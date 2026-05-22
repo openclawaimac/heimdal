@@ -101,6 +101,80 @@ class HermesHandleTests(unittest.TestCase):
         self.assertEqual(os.path.basename(os.path.dirname(path)), "workspace")
         self.assertEqual(Storage.read_json(path)["hermes_session_id"], "hermes-s1")
 
+    def test_source_missing_task_returns_need_input_not_fail(self):
+        # A source-required task whose source is absent from the Truth Vault
+        # must return need_input -- the hybrid semantic verifier must never
+        # convert a missing source into a verification fail. The Trace Pack
+        # records a no_guess_gate event with a reason and retrieval refs.
+        runtime = self._runtime()
+        result = handle(
+            _payload(
+                "Using only the local Truth Vault, state the refund policy "
+                "for Product Y.",
+                role="research",
+                constraints={"requires_sources": True},
+                budget="B2",
+            ),
+            runtime,
+        )
+        self.assertEqual(result["status"], "need_input")
+        self.assertTrue(result["questions"])
+        trace = Storage.read_json(
+            os.path.join(runtime.storage.root, result["trace_pack_ref"])
+        )
+        gate = next(e for e in trace["events"] if e["name"] == "no_guess_gate")
+        self.assertEqual(gate["data"]["outcome"], "need_input")
+        self.assertIn("reason", gate["data"])
+        self.assertIn("retrieval_refs", gate["data"])
+
+    def test_callback_delivery_is_traced(self):
+        runtime = self._runtime()
+        result = handle(
+            _payload("Explain what a queue is.", callback={"file": "cb.json"}),
+            runtime,
+        )
+        self.assertIsNotNone(result["callback_delivered"])
+        trace = Storage.read_json(
+            os.path.join(runtime.storage.root, result["trace_pack_ref"])
+        )
+        names = [e["name"] for e in trace["events"]]
+        self.assertIn("callback_delivery_start", names)
+        self.assertIn("callback_delivery_success", names)
+        success = next(
+            e for e in trace["events"] if e["name"] == "callback_delivery_success"
+        )
+        # Only the sanitized target is traced -- not the result payload.
+        self.assertEqual(success["data"]["target"], "workspace/cb.json")
+
+    def test_result_exposes_no_absolute_internal_paths(self):
+        runtime = self._runtime()
+        result = handle(
+            _payload("Explain what a tree is.", callback={"file": "out.json"}),
+            runtime,
+        )
+        # Pack and artifact refs are host-safe relative refs.
+        self.assertFalse(os.path.isabs(result["repro_pack_ref"]))
+        self.assertFalse(os.path.isabs(result["trace_pack_ref"]))
+        for artifact in result["artifacts"]:
+            self.assertIn("ref", artifact)
+            self.assertFalse(os.path.isabs(artifact["ref"]))
+        # The internal Context Packet artifact is not exposed externally.
+        self.assertNotIn("context_packet", [a["type"] for a in result["artifacts"]])
+        # The delivered callback file carries no absolute internal path.
+        written = json.dumps(Storage.read_json(result["callback_delivered"]))
+        self.assertNotIn(runtime.storage.root, written)
+
+    def test_handle_accepts_backend_and_verifier_overrides(self):
+        # handle() is a supported integration entrypoint: it accepts the same
+        # backend/model/verifier overrides as `heimdal hermes run`.
+        result = handle(
+            _payload("Explain what a queue is.", budget="B2"),
+            backend="offline",
+            verifier="hybrid",
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["verifier"]["backend"], "hybrid")
+
 
 class HermesCLITests(unittest.TestCase):
     def setUp(self):
