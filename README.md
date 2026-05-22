@@ -35,6 +35,8 @@ heimdal verify --task task.json --answer answer.json   # verify a host-supplied 
 heimdal openclaw run --input task.json        # run an OpenClaw payload through Heimdal
 heimdal hermes run --input task.json          # run a Hermes payload through Heimdal
 heimdal hermes capabilities --json            # report host-integration capabilities
+heimdal bridge init                           # create the local file bridge dirs
+heimdal bridge once --backend offline         # process inbox jobs and exit
 heimdal patch validate examples/patches/good.json
 heimdal truth list                            # list local Truth Vault sources
 heimdal truth add notes.md                    # add a .md/.txt file to the vault

@@ -1,0 +1,34 @@
+{
+  "job_id": "job-hermes-001",
+  "host": "hermes",
+  "adapter": "hermes",
+  "payload": {
+    "hermes_session_id": "hermes-bridge-001",
+    "invocation_id": "inv-bridge-1",
+    "from_agent": "Hermes",
+    "role": "general",
+    "request": {
+      "id": "bridge-hermes-t1",
+      "title": "Bridge demo",
+      "instruction": "Explain what a queue data structure is and how it behaves.",
+      "inputs": {},
+      "constraints": {
+        "max_words": 120
+      },
+      "budget": {
+        "quality_level": "B1"
+      },
+      "output_profiles": ["markdown"],
+      "expected_outputs": ["markdown_response"]
+    },
+    "policy": {
+      "privacy_mode": "local_only",
+      "risk_mode": "balanced"
+    },
+    "callback": {}
+  },
+  "runtime": {
+    "backend": "offline",
+    "verifier": "rule_based"
+  }
+}

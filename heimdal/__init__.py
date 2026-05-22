@@ -5,4 +5,4 @@ orchestration runtime: Context OS, Task Contracts, Quality Factory, Verifier,
 No-Guess Gate, Patch/Eval gate, hardware-aware scheduling, and host adapters.
 """
 
-__version__ = "0.2.7"
+__version__ = "0.2.8"

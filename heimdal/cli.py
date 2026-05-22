@@ -14,6 +14,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal hermes run --input <hermes_payload.json>
     heimdal hermes capabilities [--json]
     heimdal hermes doctor --input <hermes_payload.json>
+    heimdal bridge init | once | run | status
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -27,7 +28,7 @@ import os
 import shutil
 import sys
 
-from heimdal import __version__, jsonschema_min
+from heimdal import __version__, bridge, jsonschema_min
 from heimdal.adapters.cli_adapter import CLIAdapter
 from heimdal.adapters.hermes_adapter import HermesAdapter
 from heimdal.adapters.hermes_host import handle as run_hermes
@@ -460,6 +461,59 @@ def cmd_hermes(args) -> int:
     return 0 if result["status"] in ("pass", "need_input") else 1
 
 
+# -- bridge ----------------------------------------------------------------
+def _bridge_defaults(args) -> dict:
+    return {
+        "backend": _prefer_backend(args),
+        "model": args.model,
+        "verifier": args.verifier,
+    }
+
+
+def cmd_bridge(args) -> int:
+    config = load_config(args.manifest)
+    command = args.bridge_command
+
+    if command == "init":
+        paths = bridge.ensure_dirs(config)
+        print(f"Initialised bridge at {paths['root']}")
+        for sub in bridge.DIRS:
+            print(f"  {sub:<11}: {paths[sub]}")
+        print(
+            "Examples: examples/bridge/*.example.json (copy one into "
+            f"{paths['inbox']} with a .ready.json suffix to run)."
+        )
+        return 0
+
+    if command == "status":
+        counts = bridge.status_counts(config)
+        for sub in bridge.DIRS:
+            print(f"  {sub:<11}: {counts[sub]}")
+        return 0
+
+    if command in ("once", "run"):
+        paths = bridge.resolve_paths(config, inbox=args.inbox, outbox=args.outbox)
+        defaults = _bridge_defaults(args)
+        max_jobs = args.max_jobs or bridge.DEFAULT_MAX_JOBS_PER_CYCLE
+
+        if command == "once":
+            reports = bridge.process_cycle(config, paths, defaults, max_jobs)
+            for report in reports:
+                print(json.dumps(report, default=str))
+            return 0
+
+        cycles = bridge.run_loop(
+            config, paths, defaults,
+            poll_interval=args.poll_interval,
+            max_jobs=max_jobs,
+            on_report=lambda r: print(json.dumps(r, default=str), flush=True),
+        )
+        print(f"bridge stopped after {cycles} cycles", file=sys.stderr)
+        return 0
+
+    return 2
+
+
 # -- patch -----------------------------------------------------------------
 def cmd_patch(args) -> int:
     config = load_config(args.manifest)
@@ -647,6 +701,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_hermes.add_argument("--json", action="store_true", help="emit the Hermes result as JSON")
     p_hermes.add_argument("--manifest", help="path to the Heimdal manifest")
     p_hermes.set_defaults(func=cmd_hermes)
+
+    p_bridge = sub.add_parser(
+        "bridge", help="local file bridge for external local agents"
+    )
+    p_bridge.add_argument(
+        "bridge_command", choices=["init", "once", "run", "status"]
+    )
+    p_bridge.add_argument(
+        "--inbox", help="inbox directory (default: <storage>/bridge/inbox)"
+    )
+    p_bridge.add_argument(
+        "--outbox", help="outbox directory (default: <storage>/bridge/outbox)"
+    )
+    p_bridge.add_argument(
+        "--offline", action="store_true", help="force the offline backend"
+    )
+    p_bridge.add_argument(
+        "--backend", choices=["ollama", "offline"], help="force a backend"
+    )
+    p_bridge.add_argument("--model", help="default worker model for jobs")
+    p_bridge.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="default verifier mode"
+    )
+    p_bridge.add_argument(
+        "--poll-interval",
+        type=float,
+        default=bridge.DEFAULT_POLL_INTERVAL,
+        help="seconds between polling cycles for 'run'",
+    )
+    p_bridge.add_argument(
+        "--max-jobs", type=int, help="max jobs per cycle (default 16)"
+    )
+    p_bridge.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_bridge.set_defaults(func=cmd_bridge)
 
     p_patch = sub.add_parser("patch", help="patch tools")
     p_patch.add_argument("patch_command", choices=["validate"])

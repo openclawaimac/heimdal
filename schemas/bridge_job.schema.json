@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Bridge Job",
+  "description": "A file-bridge job: an external local agent writes one of these into <bridge>/inbox/ and Heimdal processes it.",
+  "type": "object",
+  "required": [
+    "job_id",
+    "adapter",
+    "payload"
+  ],
+  "properties": {
+    "job_id": {
+      "type": "string"
+    },
+    "host": {
+      "type": "string"
+    },
+    "adapter": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "offline"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "verifier": {
+          "type": "string",
+          "enum": [
+            "rule_based",
+            "hybrid"
+          ]
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

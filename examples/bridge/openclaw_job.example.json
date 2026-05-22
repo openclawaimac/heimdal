@@ -1,0 +1,31 @@
+{
+  "job_id": "job-openclaw-001",
+  "host": "openclaw",
+  "adapter": "openclaw",
+  "payload": {
+    "openclaw_task_id": "oc-bridge-001",
+    "assigned_role": "general",
+    "from_agent": "planner",
+    "task": {
+      "id": "bridge-oc-t1",
+      "title": "Bridge demo",
+      "prompt": "Explain what a stack data structure is in two short paragraphs.",
+      "constraints": {
+        "max_words": 120
+      },
+      "budget": {
+        "quality_level": "B1"
+      },
+      "expected_outputs": ["markdown_response"],
+      "output_profiles": ["markdown"]
+    },
+    "policy": {
+      "privacy_mode": "local_only"
+    },
+    "callback": {}
+  },
+  "runtime": {
+    "backend": "offline",
+    "verifier": "rule_based"
+  }
+}

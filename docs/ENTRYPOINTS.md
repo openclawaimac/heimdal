@@ -56,6 +56,31 @@ discover what this Heimdal install supports before sending a payload.
 
     heimdal hermes capabilities --json
 
+## `heimdal bridge` -- local file bridge for external local agents
+
+A transport layer: an external local agent (e.g. another Hermes/OpenClaw
+process) drops a JSON job into `<storage>/bridge/inbox/` and Heimdal writes
+the result to `<storage>/bridge/outbox/`. The bridge is transport-only --
+each job is routed to the existing Hermes / OpenClaw / generic handler; no
+Quality Factory logic lives here.
+
+    heimdal bridge init                           # create the bridge dirs
+    heimdal bridge once --backend offline         # process one batch and exit
+    heimdal bridge run  --backend ollama --model qwen2.5:7b --verifier hybrid
+    heimdal bridge status                         # show counts in each dir
+
+A job file (`examples/bridge/*.example.json`) selects an `adapter` (`hermes`,
+`openclaw`, or `generic`) and embeds the corresponding payload. Drop it into
+the inbox with the `.ready.json` suffix to mark it complete (or a plain
+`.json` that's been on disk for at least a second). The bridge moves the
+job through `inbox -> processing -> {archive | failed}` and writes one of:
+
+- `outbox/<job_id>.result.json` (success) -- carries the adapter result plus
+  host-safe `trace_pack_ref` / `repro_pack_ref` and a `bridge` block.
+- `failed/<job_id>.error.json` (failure) -- carries a machine-readable
+  `code`: `JOB_SCHEMA_INVALID`, `ADAPTER_UNSUPPORTED`, `OLLAMA_UNREACHABLE`,
+  `OLLAMA_MODEL_MISSING`, `INTERNAL_ERROR`.
+
 ## `heimdal hermes doctor` (`heimdal openclaw doctor`)
 
 Integration diagnostics. Validates the payload, checks storage writability,
@@ -76,3 +101,4 @@ with `status` one of `pass | warning | fail`. Exits non-zero only on `fail`.
 | Hermes host integration | `heimdal hermes run` (+ `capabilities`, `doctor`) |
 | OpenClaw host integration | `heimdal openclaw run` (+ `capabilities`, `doctor`) |
 | Host grades its own answer | `heimdal verify` |
+| External agent without Python / server | `heimdal bridge` |
