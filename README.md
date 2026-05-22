@@ -31,6 +31,7 @@ heimdal run demo                              # run the built-in demo task
 heimdal run --input examples/tasks/simple_task.json
 heimdal run --instruction "Explain what a queue is."
 heimdal eval run                              # run the eval suite + write a summary
+heimdal openclaw run --input task.json        # run an OpenClaw payload through Heimdal
 heimdal patch validate examples/patches/good.json
 heimdal truth list                            # list local Truth Vault sources
 heimdal truth add notes.md                    # add a .md/.txt file to the vault
@@ -39,6 +40,21 @@ heimdal logs latest                           # inspect the most recent run
 ```
 
 Without an install, use `python -m heimdal <command>`.
+
+### OpenClaw integration
+
+OpenClaw drives Heimdal as a single agent — either via `heimdal openclaw run`
+or in-process:
+
+```python
+from heimdal.adapters.openclaw_host import handle
+result = handle(openclaw_payload)        # -> OpenClaw-style result dict
+```
+
+`handle()` translates the payload, runs the full Quality Factory, and
+translates the result back. When the payload carries `callback.file`, the
+result is also written under `storage/workspace/`. The `OpenClawAdapter` itself
+only translates; it never orchestrates.
 
 ### Backend and model selection
 

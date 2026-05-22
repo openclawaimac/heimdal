@@ -2,7 +2,9 @@
   "openclaw_task_id": "oc-7781",
   "assigned_role": "research",
   "from_agent": "planner",
-  "callback": {},
+  "callback": {
+    "file": "openclaw_result.json"
+  },
   "task": {
     "id": "oc-7781-t1",
     "title": "Summarize Heimdal modes",

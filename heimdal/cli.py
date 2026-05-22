@@ -7,6 +7,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal run --input <task.json>
     heimdal run --instruction "..."
     heimdal eval run
+    heimdal openclaw run --input <openclaw_payload.json>
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -22,6 +23,7 @@ import sys
 
 from heimdal import __version__
 from heimdal.adapters.cli_adapter import CLIAdapter
+from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
 from heimdal.core import eval_runner, patch_manager
 from heimdal.core.runtime import Runtime
@@ -134,6 +136,38 @@ def cmd_eval(args) -> int:
     print(f"  regressed  : {summary['regressed']}")
     print(f"  summary    : {summary['summary_path']}")
     return 0 if summary["must_pass_all_passed"] else 1
+
+
+# -- openclaw --------------------------------------------------------------
+def cmd_openclaw(args) -> int:
+    config = load_config(args.manifest)
+    payload = Storage.read_json(args.input)
+    runtime = Runtime(
+        config,
+        prefer_backend=_prefer_backend(args),
+        model_override=args.model,
+        verifier_override=args.verifier,
+    )
+    result = run_openclaw(payload, runtime)
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(f"outcome : {result['outcome']}")
+        print(
+            f"task    : {result['heimdal_task_id']} "
+            f"(openclaw {result['openclaw_task_id']})"
+        )
+        print(f"summary : {result['summary']}")
+        for question in result.get("questions", []):
+            print(f"  question: {question}")
+        if result.get("callback_delivered"):
+            print(f"callback: {result['callback_delivered']}")
+        if result.get("repro_pack_ref"):
+            print(f"repro   : {result['repro_pack_ref']}")
+        if result.get("trace_pack_ref"):
+            print(f"trace   : {result['trace_pack_ref']}")
+    return 0 if result["outcome"] in ("pass", "need_input") else 1
 
 
 # -- patch -----------------------------------------------------------------
@@ -266,6 +300,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--json", action="store_true", help="emit JSON")
     p_eval.add_argument("--manifest", help="path to the Heimdal manifest")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_oc = sub.add_parser("openclaw", help="run a task from an OpenClaw payload")
+    p_oc.add_argument("openclaw_command", choices=["run"])
+    p_oc.add_argument(
+        "--input", required=True, help="path to an OpenClaw payload JSON file"
+    )
+    p_oc.add_argument("--offline", action="store_true", help="force the offline backend")
+    p_oc.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
+    p_oc.add_argument("--model", help="override the worker model")
+    p_oc.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="override the verifier mode"
+    )
+    p_oc.add_argument("--json", action="store_true", help="emit the OpenClaw result as JSON")
+    p_oc.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_oc.set_defaults(func=cmd_openclaw)
 
     p_patch = sub.add_parser("patch", help="patch tools")
     p_patch.add_argument("patch_command", choices=["validate"])
