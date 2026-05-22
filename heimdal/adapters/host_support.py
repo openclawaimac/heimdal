@@ -39,11 +39,14 @@ def host_safe_ref(path) -> str:
     return "/".join(parts[-3:])
 
 
-def host_safe_artifacts(artifacts, omit=("context_packet",)) -> list[dict]:
+def host_safe_artifacts(
+    artifacts, omit=("context_packet", "task_contract")
+) -> list[dict]:
     """Translate runtime artifacts into host-safe ``{type, ref}`` entries.
 
     Absolute paths are reduced to relative refs; internal-only artifacts (the
-    Context Packet by default) are dropped from the external result.
+    Context Packet and Task Contract by default) are dropped from the external
+    result so the host sees only the response and the verification summary.
     """
     safe: list[dict] = []
     for artifact in artifacts or []:

@@ -4,6 +4,8 @@ handle() drives Heimdal end to end from an OpenClaw payload; callback files
 land under storage/workspace; the `heimdal openclaw run` CLI works.
 """
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -115,8 +117,34 @@ class OpenClawCLITests(unittest.TestCase):
         )
 
     def test_openclaw_run_requires_input(self):
-        with self.assertRaises(SystemExit):
-            main(["openclaw", "run", "--manifest", self.manifest])
+        self.assertEqual(
+            main(["openclaw", "run", "--manifest", self.manifest]), 2
+        )
+
+    def test_openclaw_capabilities_command(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(
+                ["openclaw", "capabilities", "--json", "--manifest", self.manifest]
+            )
+        self.assertEqual(code, 0)
+        caps = json.loads(buf.getvalue())
+        self.assertTrue(caps["supports_openclaw_adapter"])
+        self.assertIn("hybrid", caps["supported_verifiers"])
+
+    def test_openclaw_doctor_offline_passes(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(
+                [
+                    "openclaw", "doctor",
+                    "--input", repo_path("examples/tasks/openclaw_task.example.json"),
+                    "--backend", "offline", "--json", "--manifest", self.manifest,
+                ]
+            )
+        self.assertEqual(code, 0)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["status"], "pass")
 
 
 if __name__ == "__main__":

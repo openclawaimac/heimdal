@@ -196,8 +196,12 @@ class HermesHandleTests(unittest.TestCase):
         for artifact in result["artifacts"]:
             self.assertIn("ref", artifact)
             self.assertFalse(os.path.isabs(artifact["ref"]))
-        # The internal Context Packet artifact is not exposed externally.
-        self.assertNotIn("context_packet", [a["type"] for a in result["artifacts"]])
+        # Internal Context Packet + Task Contract artifacts are not exposed.
+        types = [a["type"] for a in result["artifacts"]]
+        self.assertNotIn("context_packet", types)
+        self.assertNotIn("task_contract", types)
+        # The legacy absolute-path key is gone.
+        self.assertNotIn("callback_delivered", result)
         # callback_delivery exposes a relative ref, never an absolute path.
         delivery = result["callback_delivery"]
         self.assertFalse(os.path.isabs(delivery["target_ref"]))
@@ -206,6 +210,29 @@ class HermesHandleTests(unittest.TestCase):
             Storage.read_json(os.path.join(runtime.storage.root, delivery["target_ref"]))
         )
         self.assertNotIn(runtime.storage.root, written)
+
+    def test_missing_topic_is_concise(self):
+        # _missing_topic distills "...refund policy for Product Y." down to a
+        # short topic so the host knows what to supply, not the whole prompt.
+        result = handle(
+            _payload(
+                "Using only the local Truth Vault, state the refund policy "
+                "for Product Y.",
+                role="research",
+                constraints={"requires_sources": True},
+                budget="B2",
+            ),
+            self._runtime(),
+        )
+        topic = result["needed_inputs"][0]["missing_topic"]
+        self.assertEqual(topic, "Product Y refund policy")
+
+    def test_host_visible_artifacts_exclude_internals(self):
+        result = handle(_payload("Explain what a queue is."), self._runtime())
+        types = [a["type"] for a in result["artifacts"]]
+        self.assertIn("response", types)
+        self.assertNotIn("context_packet", types)
+        self.assertNotIn("task_contract", types)
 
     def test_handle_accepts_backend_and_verifier_overrides(self):
         # handle() is a supported integration entrypoint: it accepts the same
@@ -250,6 +277,64 @@ class HermesCLITests(unittest.TestCase):
         self.assertTrue(caps["supports_verify_only"])
         self.assertTrue(caps["supports_needed_inputs"])
         self.assertIn("hybrid", caps["supported_verifiers"])
+
+    def test_hermes_doctor_offline_passes(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(
+                [
+                    "hermes", "doctor",
+                    "--input", repo_path("examples/tasks/hermes_task.example.json"),
+                    "--backend", "offline", "--json", "--manifest", self.manifest,
+                ]
+            )
+        self.assertEqual(code, 0)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["status"], "pass")
+        names = [c["name"] for c in report["checks"]]
+        for required in (
+            "payload_valid",
+            "hermes_schema_loadable",
+            "end_to_end_run",
+            "no_absolute_paths",
+            "no_internal_artifacts",
+            "no_internal_fields",
+        ):
+            self.assertIn(required, names)
+
+    def test_hermes_doctor_requires_input(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["hermes", "doctor", "--json", "--manifest", self.manifest])
+        self.assertEqual(code, 1)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["checks"][0]["name"], "input_provided")
+
+
+class MissingTopicTests(unittest.TestCase):
+    """v0.2.7: deterministic concise-topic extraction for needed_inputs."""
+
+    def test_for_pivot(self):
+        from heimdal.core.quality_factory import _missing_topic
+        self.assertEqual(
+            _missing_topic(
+                "Using only the local Truth Vault, state the refund policy "
+                "for Product Y."
+            ),
+            "Product Y refund policy",
+        )
+
+    def test_of_pivot(self):
+        from heimdal.core.quality_factory import _missing_topic
+        self.assertEqual(
+            _missing_topic("State the exact subscription price of Product Zeta."),
+            "Product Zeta subscription price",
+        )
+
+    def test_falls_back_to_cleaned_instruction(self):
+        from heimdal.core.quality_factory import _missing_topic
+        self.assertEqual(_missing_topic("Hello world."), "Hello world")
 
 
 if __name__ == "__main__":

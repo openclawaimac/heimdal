@@ -9,8 +9,11 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal eval run
     heimdal verify --task <task.json> --answer <answer.json>
     heimdal openclaw run --input <openclaw_payload.json>
+    heimdal openclaw capabilities [--json]
+    heimdal openclaw doctor --input <openclaw_payload.json>
     heimdal hermes run --input <hermes_payload.json>
     heimdal hermes capabilities [--json]
+    heimdal hermes doctor --input <hermes_payload.json>
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -24,12 +27,14 @@ import os
 import shutil
 import sys
 
-from heimdal import __version__
+from heimdal import __version__, jsonschema_min
 from heimdal.adapters.cli_adapter import CLIAdapter
+from heimdal.adapters.hermes_adapter import HermesAdapter
 from heimdal.adapters.hermes_host import handle as run_hermes
+from heimdal.adapters.openclaw_adapter import OpenClawAdapter
 from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
-from heimdal.core import eval_runner, patch_manager
+from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
@@ -177,9 +182,207 @@ def cmd_verify(args) -> int:
     return 0 if result["status"] == "pass" else 1
 
 
+# -- host doctor (shared by hermes + openclaw) -----------------------------
+def _emit_doctor(status, checks, warnings, suggested, args):
+    report = {
+        "status": status,
+        "checks": checks,
+        "warnings": warnings,
+        "suggested_fixes": suggested,
+    }
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print(f"status: {status}")
+        for check in checks:
+            mark = "ok  " if check["passed"] else "FAIL"
+            extras = {
+                k: v for k, v in check.items() if k not in ("name", "passed")
+            }
+            tail = f" {extras}" if extras else ""
+            print(f"  [{mark}] {check['name']}{tail}")
+        for warning in warnings:
+            print(f"  warning: {warning}")
+        for fix in suggested:
+            print(f"  fix    : {fix}")
+    return 1 if status == "fail" else 0
+
+
+def _host_doctor(args, *, host_type: str) -> int:
+    """Run Hermes/OpenClaw integration diagnostics for an input payload."""
+    config = load_config(args.manifest)
+    storage = Storage(config.storage_root).ensure()
+    checks: list[dict] = []
+    warnings: list[str] = []
+    suggested: list[str] = []
+
+    def add(name, passed, **data):
+        checks.append({"name": name, "passed": passed, **data})
+
+    if not args.input:
+        return _emit_doctor(
+            "fail",
+            [{"name": "input_provided", "passed": False}],
+            warnings,
+            [f"'{host_type} doctor' requires --input <payload.json>"],
+            args,
+        )
+
+    try:
+        payload = Storage.read_json(args.input)
+        add("payload_loaded", True)
+    except (OSError, ValueError) as exc:
+        add("payload_loaded", False, error=str(exc))
+        suggested.append("Provide a valid JSON payload via --input.")
+        return _emit_doctor("fail", checks, warnings, suggested, args)
+
+    adapter = HermesAdapter() if host_type == "hermes" else OpenClawAdapter()
+    try:
+        envelope = adapter.to_host_task_envelope(payload)
+        intake.intake(envelope, config)
+        add("payload_valid", True)
+    except (ValueError, KeyError, TypeError) as exc:
+        add("payload_valid", False, error=str(exc))
+        suggested.append(
+            f"Fix the {host_type} payload to match the documented shape."
+        )
+
+    for sub in ("workspace", "logs/trace_packs", "logs/repro_packs"):
+        path = storage.path(sub)
+        writable = os.path.isdir(path) and os.access(path, os.W_OK)
+        add(f"{sub.replace('/', '_')}_writable", writable, path=sub)
+        if not writable:
+            suggested.append(f"Ensure storage_root/{sub} exists and is writable.")
+
+    if isinstance(payload, dict):
+        callback = (payload.get("callback") or {}).get("file")
+        if callback:
+            add("callback_safe", True,
+                target_ref=f"workspace/{os.path.basename(str(callback))}")
+
+    verifier_mode = args.verifier
+    if verifier_mode in (None, "rule_based", "hybrid"):
+        add("verifier_mode_valid", True, mode=verifier_mode or "default")
+    else:
+        add("verifier_mode_valid", False, mode=verifier_mode)
+        suggested.append("Use --verifier rule_based or hybrid.")
+
+    if args.backend == "ollama":
+        ollama = detect_ollama(config)
+        if ollama["reachable"]:
+            add("ollama_reachable", True, base_url=ollama["base_url"])
+            if args.model:
+                if args.model in ollama["models"]:
+                    add("model_installed", True, model=args.model)
+                else:
+                    add("model_installed", False, model=args.model,
+                        code="OLLAMA_MODEL_MISSING")
+                    suggested.append(f"Run: ollama pull {args.model}")
+            else:
+                warnings.append(
+                    "No --model specified; Heimdal will auto-select a candidate."
+                )
+        else:
+            add("ollama_reachable", False, code="OLLAMA_UNREACHABLE",
+                base_url=ollama["base_url"])
+            suggested.append("Start Ollama or rerun with --backend offline.")
+
+    if host_type == "hermes":
+        try:
+            jsonschema_min.load_schema(
+                config.schema_path("hermes_result.schema.json")
+            )
+            add("hermes_schema_loadable", True)
+        except (OSError, ValueError) as exc:
+            add("hermes_schema_loadable", False, error=str(exc))
+
+    payload_ok = any(c["name"] == "payload_valid" and c["passed"] for c in checks)
+    if payload_ok:
+        try:
+            runtime = Runtime(
+                config,
+                prefer_backend=_prefer_backend(args),
+                model_override=args.model,
+                verifier_override=args.verifier,
+            )
+            host_fn = run_hermes if host_type == "hermes" else run_openclaw
+            result = host_fn(payload, runtime)
+            outcome = result.get("status") or result.get("outcome")
+            add("end_to_end_run", True, outcome=outcome)
+
+            blob = json.dumps(result, default=str)
+            if storage.root in blob:
+                add("no_absolute_paths", False)
+                suggested.append("Host result exposed absolute paths.")
+            else:
+                add("no_absolute_paths", True)
+
+            internal_types = {"context_packet", "task_contract"}
+            leaked = [
+                a.get("type") for a in result.get("artifacts", [])
+                if a.get("type") in internal_types
+            ]
+            add("no_internal_artifacts", not leaked, leaked=leaked)
+            if leaked:
+                suggested.append(f"Internal artifacts exposed: {leaked}.")
+
+            internal_fields = ("prompt", "system", "routing", "packet",
+                               "context_packet", "models_used")
+            leaked_fields = [k for k in internal_fields if k in result]
+            add("no_internal_fields", not leaked_fields, leaked=leaked_fields)
+            if leaked_fields:
+                suggested.append(
+                    f"Host result exposed internal fields: {leaked_fields}."
+                )
+        except (RuntimeError, OSError, ValueError) as exc:
+            add("end_to_end_run", False, error=str(exc))
+            suggested.append(
+                "End-to-end run failed; adjust payload/backend and retry."
+            )
+
+    failed = [c for c in checks if not c["passed"]]
+    if failed:
+        status = "fail"
+    elif warnings:
+        status = "warning"
+    else:
+        status = "pass"
+    return _emit_doctor(status, checks, warnings, suggested, args)
+
+
+def _host_capabilities(*, host_type: str, args) -> int:
+    config = load_config(args.manifest)
+    ollama = detect_ollama(config)
+    capabilities = {
+        "heimdal_version": __version__,
+        "supported_backends": ["offline", "ollama"],
+        "supported_verifiers": ["rule_based", "hybrid"],
+        "supports_need_input": True,
+        "supports_needed_inputs": True,
+        "supports_callback": True,
+        "supports_verify_only": True,
+        f"supports_{host_type}_adapter": True,
+        "models": ollama["models"],
+    }
+    if args.json:
+        print(json.dumps(capabilities, indent=2))
+    else:
+        for key, value in capabilities.items():
+            print(f"  {key:<22}: {value}")
+    return 0
+
+
 # -- openclaw --------------------------------------------------------------
 def cmd_openclaw(args) -> int:
+    if args.openclaw_command == "capabilities":
+        return _host_capabilities(host_type="openclaw", args=args)
+    if args.openclaw_command == "doctor":
+        return _host_doctor(args, host_type="openclaw")
+
     config = load_config(args.manifest)
+    if not args.input:
+        print("error: 'openclaw run' requires --input", file=sys.stderr)
+        return 2
     payload = Storage.read_json(args.input)
     runtime = Runtime(
         config,
@@ -216,31 +419,11 @@ def _print_callback(delivery) -> None:
         print(f"callback: {delivery['status']} -> {delivery['target_ref']}")
 
 
-def cmd_hermes_capabilities(args) -> int:
-    config = load_config(args.manifest)
-    ollama = detect_ollama(config)
-    capabilities = {
-        "heimdal_version": __version__,
-        "supported_backends": ["offline", "ollama"],
-        "supported_verifiers": ["rule_based", "hybrid"],
-        "supports_need_input": True,
-        "supports_needed_inputs": True,
-        "supports_callback": True,
-        "supports_verify_only": True,
-        "supports_hermes_adapter": True,
-        "models": ollama["models"],
-    }
-    if args.json:
-        print(json.dumps(capabilities, indent=2))
-    else:
-        for key, value in capabilities.items():
-            print(f"  {key:<22}: {value}")
-    return 0
-
-
 def cmd_hermes(args) -> int:
     if args.hermes_command == "capabilities":
-        return cmd_hermes_capabilities(args)
+        return _host_capabilities(host_type="hermes", args=args)
+    if args.hermes_command == "doctor":
+        return _host_doctor(args, host_type="hermes")
 
     config = load_config(args.manifest)
     if not args.input:
@@ -430,9 +613,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.set_defaults(func=cmd_verify)
 
     p_oc = sub.add_parser("openclaw", help="run a task from an OpenClaw payload")
-    p_oc.add_argument("openclaw_command", choices=["run"])
     p_oc.add_argument(
-        "--input", required=True, help="path to an OpenClaw payload JSON file"
+        "openclaw_command", choices=["run", "capabilities", "doctor"]
+    )
+    p_oc.add_argument(
+        "--input",
+        help="path to an OpenClaw payload JSON file (required for 'run' / 'doctor')",
     )
     p_oc.add_argument("--offline", action="store_true", help="force the offline backend")
     p_oc.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
@@ -445,9 +631,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_oc.set_defaults(func=cmd_openclaw)
 
     p_hermes = sub.add_parser("hermes", help="run a task from a Hermes payload")
-    p_hermes.add_argument("hermes_command", choices=["run", "capabilities"])
     p_hermes.add_argument(
-        "--input", help="path to a Hermes payload JSON file (required for 'run')"
+        "hermes_command", choices=["run", "capabilities", "doctor"]
+    )
+    p_hermes.add_argument(
+        "--input",
+        help="path to a Hermes payload JSON file (required for 'run' / 'doctor')",
     )
     p_hermes.add_argument("--offline", action="store_true", help="force the offline backend")
     p_hermes.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
