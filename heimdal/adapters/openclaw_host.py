@@ -44,8 +44,9 @@ def handle(
     result = runtime.run_envelope(envelope)
     oc_result = adapter.from_heimdal_result(result)
     oc_result["answer"] = read_answer(result)
-    delivered, callback_events = deliver_callback(payload, oc_result, runtime)
-    oc_result["callback_delivered"] = delivered
+    oc_result["callback_delivery"] = None
+    delivery, callback_events = deliver_callback(payload, oc_result, runtime)
+    oc_result["callback_delivery"] = delivery
     trace_path = (result.get("trace_pack") or {}).get("path")
     if trace_path:
         repro_trace.append_trace_events(

@@ -10,10 +10,20 @@ See docs/builder_pack/04_runtime/QUALITY_FACTORY.md.
 
 from __future__ import annotations
 
-from heimdal.core import context_os, model_router, verifier
+from heimdal.core import context_os, model_router, status_codes, verifier
 from heimdal.core.constants import FAIL, HYBRID, NEED_INPUT, PASS
 from heimdal.core.task_contract import requires_grounding
 from heimdal.retrieval import truth_store
+
+
+def _needed_input(objective: str, reason: str) -> dict:
+    """A single structured needed-input entry for a need_input result."""
+    return {
+        "type": "source_document",
+        "reason": reason,
+        "missing_topic": objective,
+        "suggested_action": "Provide a source document or allow retrieval.",
+    }
 
 
 def _worker_prompt_with_defects(prompt: str, defects: list[dict]) -> str:
@@ -70,14 +80,17 @@ def run_quality_factory(
         if not packet["truth_context"] or coverage < min_coverage:
             if not packet["truth_context"]:
                 reason = "no truth sources retrieved for a source-required task"
+                code = status_codes.SOURCE_MISSING
             else:
                 reason = (
                     f"retrieved sources cover only {coverage:.0%} of the task's "
                     f"key terms (minimum {min_coverage:.0%})"
                 )
+                code = status_codes.SOURCE_SUPPORT_INSUFFICIENT
             trace.event(
                 "no_guess_gate",
                 outcome=NEED_INPUT,
+                code=code,
                 reason=reason,
                 retrieval_refs=context_os.retrieval_refs(packet),
             )
@@ -89,6 +102,8 @@ def run_quality_factory(
             )
             return {
                 "status": NEED_INPUT,
+                "code": code,
+                "needed_inputs": [_needed_input(contract["objective"], reason)],
                 "output_text": "",
                 "questions": [question],
                 "packet": packet,
@@ -192,10 +207,27 @@ def run_quality_factory(
     if status == FAIL and best_verification.get("missing_sources"):
         status = NEED_INPUT
 
+    if status == PASS:
+        code, questions, needed_inputs = status_codes.OK, [], []
+    elif status == NEED_INPUT:
+        reason = "; ".join(best_verification.get("missing_sources", [])) or (
+            "source-required task lacks sufficient grounding"
+        )
+        code = status_codes.SOURCE_MISSING
+        questions = [
+            "This task requires grounded sources that Heimdal could not "
+            f"retrieve: {reason}. Provide the source document or reference."
+        ]
+        needed_inputs = [_needed_input(contract["objective"], reason)]
+    else:
+        code, questions, needed_inputs = status_codes.fail_code(best_verification), [], []
+
     return {
         "status": status,
+        "code": code,
+        "needed_inputs": needed_inputs,
         "output_text": best_text,
-        "questions": [],
+        "questions": questions,
         "packet": packet,
         "routing": routing,
         "verification": best_verification,

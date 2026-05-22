@@ -5,6 +5,8 @@ Quality Factory internally. The adapter only translates; hermes_host
 orchestrates.
 """
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -12,6 +14,7 @@ import unittest
 
 from tests.helpers import repo_path, temp_config, write_temp_manifest
 
+from heimdal import __version__, jsonschema_min
 from heimdal.adapters.hermes_adapter import HermesAdapter
 from heimdal.adapters.hermes_host import handle
 from heimdal.cli import main
@@ -92,14 +95,48 @@ class HermesHandleTests(unittest.TestCase):
             self.assertNotIn(internal, result)
 
     def test_callback_file_written_under_workspace(self):
+        runtime = self._runtime()
         result = handle(
             _payload("Explain what a list is.", callback={"file": "hermes_out.json"}),
+            runtime,
+        )
+        delivery = result["callback_delivery"]
+        self.assertEqual(delivery["status"], "success")
+        self.assertEqual(delivery["target_ref"], "workspace/hermes_out.json")
+        written = Storage.read_json(
+            os.path.join(runtime.storage.root, delivery["target_ref"])
+        )
+        self.assertEqual(written["hermes_session_id"], "hermes-s1")
+
+    def test_need_input_carries_code_and_needed_inputs(self):
+        result = handle(
+            _payload(
+                "State the exact subscription price of Product Zeta.",
+                role="research",
+                constraints={"requires_sources": True},
+                budget="B2",
+            ),
             self._runtime(),
         )
-        path = result["callback_delivered"]
-        self.assertIsNotNone(path)
-        self.assertEqual(os.path.basename(os.path.dirname(path)), "workspace")
-        self.assertEqual(Storage.read_json(path)["hermes_session_id"], "hermes-s1")
+        self.assertEqual(result["status"], "need_input")
+        self.assertEqual(result["code"], "SOURCE_MISSING")
+        self.assertTrue(result["needed_inputs"])
+        entry = result["needed_inputs"][0]
+        for key in ("type", "reason", "missing_topic", "suggested_action"):
+            self.assertIn(key, entry)
+
+    def test_result_validates_against_hermes_schema(self):
+        # handle() validates its output against the Hermes result schema; a
+        # passing run round-trips a schema-valid result with no internal leakage.
+        result = handle(_payload("Explain what a queue is."), self._runtime())
+        self.assertEqual(result["code"], "OK")
+        errors = jsonschema_min.validate(
+            result, jsonschema_min.load_schema(repo_path("schemas/hermes_result.schema.json"))
+        )
+        self.assertEqual(errors, [])
+        for internal in ("prompt", "system", "routing", "packet", "context_packet"):
+            self.assertNotIn(internal, result)
+        self.assertNotIn("context_packet", [a["type"] for a in result["artifacts"]])
 
     def test_source_missing_task_returns_need_input_not_fail(self):
         # A source-required task whose source is absent from the Truth Vault
@@ -133,7 +170,8 @@ class HermesHandleTests(unittest.TestCase):
             _payload("Explain what a queue is.", callback={"file": "cb.json"}),
             runtime,
         )
-        self.assertIsNotNone(result["callback_delivered"])
+        self.assertEqual(result["callback_delivery"]["status"], "success")
+        self.assertEqual(result["callback_delivery"]["target_ref"], "workspace/cb.json")
         trace = Storage.read_json(
             os.path.join(runtime.storage.root, result["trace_pack_ref"])
         )
@@ -160,8 +198,13 @@ class HermesHandleTests(unittest.TestCase):
             self.assertFalse(os.path.isabs(artifact["ref"]))
         # The internal Context Packet artifact is not exposed externally.
         self.assertNotIn("context_packet", [a["type"] for a in result["artifacts"]])
+        # callback_delivery exposes a relative ref, never an absolute path.
+        delivery = result["callback_delivery"]
+        self.assertFalse(os.path.isabs(delivery["target_ref"]))
         # The delivered callback file carries no absolute internal path.
-        written = json.dumps(Storage.read_json(result["callback_delivered"]))
+        written = json.dumps(
+            Storage.read_json(os.path.join(runtime.storage.root, delivery["target_ref"]))
+        )
         self.assertNotIn(runtime.storage.root, written)
 
     def test_handle_accepts_backend_and_verifier_overrides(self):
@@ -195,8 +238,18 @@ class HermesCLITests(unittest.TestCase):
         )
 
     def test_hermes_run_requires_input(self):
-        with self.assertRaises(SystemExit):
-            main(["hermes", "run", "--manifest", self.manifest])
+        self.assertEqual(main(["hermes", "run", "--manifest", self.manifest]), 2)
+
+    def test_hermes_capabilities_command(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["hermes", "capabilities", "--json", "--manifest", self.manifest])
+        self.assertEqual(code, 0)
+        caps = json.loads(buf.getvalue())
+        self.assertEqual(caps["heimdal_version"], __version__)
+        self.assertTrue(caps["supports_verify_only"])
+        self.assertTrue(caps["supports_needed_inputs"])
+        self.assertIn("hybrid", caps["supported_verifiers"])
 
 
 if __name__ == "__main__":

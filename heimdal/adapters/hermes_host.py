@@ -11,6 +11,7 @@ back, and delivers the result to a file callback when one is requested.
 
 from __future__ import annotations
 
+from heimdal import jsonschema_min
 from heimdal.adapters.hermes_adapter import HermesAdapter
 from heimdal.adapters.host_support import deliver_callback, read_answer
 from heimdal.core import repro_trace
@@ -47,11 +48,20 @@ def handle(
     # back here from the original payload.
     hermes_result["hermes_session_id"] = payload.get("hermes_session_id", "")
     hermes_result["answer"] = read_answer(result)
-    delivered, callback_events = deliver_callback(payload, hermes_result, runtime)
-    hermes_result["callback_delivered"] = delivered
+    # Deliver the callback before the delivery status is known, so the written
+    # file is itself a schema-valid Hermes result; the real status is then set
+    # on the value returned to the caller.
+    hermes_result["callback_delivery"] = None
+    delivery, callback_events = deliver_callback(payload, hermes_result, runtime)
+    hermes_result["callback_delivery"] = delivery
     trace_path = (result.get("trace_pack") or {}).get("path")
     if trace_path:
         repro_trace.append_trace_events(
             runtime.storage, runtime.config, trace_path, callback_events
         )
+    jsonschema_min.validate_or_raise(
+        hermes_result,
+        runtime.config.schema_path("hermes_result.schema.json"),
+        "Hermes Result",
+    )
     return hermes_result

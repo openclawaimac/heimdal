@@ -1,0 +1,3 @@
+{
+  "answer": "A queue is a first-in, first-out (FIFO) data structure. Elements are added at the back of the queue (enqueue) and removed from the front (dequeue), so the earliest item added is always the next one served. Queues are widely used for ordered processing: task scheduling, breadth-first traversal, and buffering work between a producer and a consumer."
+}

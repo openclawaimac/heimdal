@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Hermes Result",
+  "description": "The Hermes-style result Heimdal returns to a Hermes host. Heimdal is presented as one agent: no raw prompts, no full Context Packet, no internal sub-agent graph, and only host-safe relative references.",
+  "type": "object",
+  "required": [
+    "hermes_session_id",
+    "invocation_id",
+    "heimdal_task_id",
+    "status",
+    "code",
+    "message",
+    "questions",
+    "needed_inputs",
+    "answer",
+    "artifacts",
+    "repro_pack_ref",
+    "trace_pack_ref",
+    "verifier",
+    "metrics",
+    "callback_delivery"
+  ],
+  "properties": {
+    "hermes_session_id": {
+      "type": "string"
+    },
+    "invocation_id": {
+      "type": "string"
+    },
+    "heimdal_task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "need_input"
+      ]
+    },
+    "code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "needed_inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "reason"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "missing_topic": {
+            "type": "string"
+          },
+          "suggested_action": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "answer": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "ref"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^[^/]"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "repro_pack_ref": {
+      "type": "string",
+      "pattern": "^[^/]"
+    },
+    "trace_pack_ref": {
+      "type": "string",
+      "pattern": "^[^/]"
+    },
+    "verifier": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "callback_delivery": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failed"
+          ]
+        },
+        "target_ref": {
+          "type": "string",
+          "pattern": "^[^/]"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

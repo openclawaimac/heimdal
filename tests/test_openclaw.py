@@ -64,31 +64,35 @@ class OpenClawHandleTests(unittest.TestCase):
         self.assertTrue(result["questions"])
 
     def test_callback_file_written_under_workspace(self):
+        runtime = self._runtime()
         result = handle(
             _payload("Explain what a stack is.", callback={"file": "oc_out.json"}),
-            self._runtime(),
+            runtime,
         )
-        path = result["callback_delivered"]
-        self.assertIsNotNone(path)
-        self.assertEqual(os.path.basename(os.path.dirname(path)), "workspace")
-        written = Storage.read_json(path)
+        delivery = result["callback_delivery"]
+        self.assertEqual(delivery["status"], "success")
+        self.assertEqual(delivery["target_ref"], "workspace/oc_out.json")
+        written = Storage.read_json(
+            os.path.join(runtime.storage.root, delivery["target_ref"])
+        )
         self.assertEqual(written["openclaw_task_id"], "oc-1")
         self.assertEqual(written["outcome"], "pass")
 
     def test_callback_path_traversal_is_contained(self):
+        runtime = self._runtime()
         result = handle(
             _payload("Explain what a list is.", callback={"file": "../../etc/evil.json"}),
-            self._runtime(),
+            runtime,
         )
-        path = result["callback_delivered"]
+        delivery = result["callback_delivery"]
         # Directory components stripped: the file stays inside workspace.
-        self.assertEqual(os.path.basename(path), "evil.json")
-        self.assertEqual(os.path.basename(os.path.dirname(path)), "workspace")
+        self.assertEqual(delivery["target_ref"], "workspace/evil.json")
+        path = os.path.join(runtime.storage.root, "workspace", "evil.json")
         self.assertTrue(os.path.exists(path))
 
     def test_no_callback_delivers_nothing(self):
         result = handle(_payload("Explain what a tree is."), self._runtime())
-        self.assertIsNone(result["callback_delivered"])
+        self.assertIsNone(result["callback_delivery"])
 
 
 class OpenClawCLITests(unittest.TestCase):

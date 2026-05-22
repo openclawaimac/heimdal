@@ -31,8 +31,10 @@ heimdal run demo                              # run the built-in demo task
 heimdal run --input examples/tasks/simple_task.json
 heimdal run --instruction "Explain what a queue is."
 heimdal eval run                              # run the eval suite + write a summary
+heimdal verify --task task.json --answer answer.json   # verify a host-supplied answer
 heimdal openclaw run --input task.json        # run an OpenClaw payload through Heimdal
 heimdal hermes run --input task.json          # run a Hermes payload through Heimdal
+heimdal hermes capabilities --json            # report host-integration capabilities
 heimdal patch validate examples/patches/good.json
 heimdal truth list                            # list local Truth Vault sources
 heimdal truth add notes.md                    # add a .md/.txt file to the vault
@@ -41,6 +43,9 @@ heimdal logs latest                           # inspect the most recent run
 ```
 
 Without an install, use `python -m heimdal <command>`.
+
+`heimdal verify` runs only the verifier on an answer a host drafted itself —
+useful when a host wants Heimdal to grade a candidate rather than produce one.
 
 ### Host integrations (OpenClaw, Hermes)
 
@@ -56,10 +61,18 @@ result = hermes_handle(hermes_payload)       # -> Hermes-style result dict
 ```
 
 `handle()` translates the host payload, runs the full Quality Factory, and
-translates the result back. When the payload carries `callback.file`, the
-result is also written under `storage/workspace/`. The adapter classes
-(`OpenClawAdapter`, `HermesAdapter`) only translate; orchestration lives in the
-`*_host` modules. CLI equivalents: `heimdal openclaw run` and `heimdal hermes run`.
+translates the result back. It accepts `backend` / `model` / `verifier`
+overrides, and when the payload carries `callback.file` the result is also
+written under `storage/workspace/`. The adapter classes (`OpenClawAdapter`,
+`HermesAdapter`) only translate; orchestration lives in the `*_host` modules.
+CLI equivalents: `heimdal openclaw run` and `heimdal hermes run`.
+
+The Hermes result is schema-formalized (`schemas/hermes_result.schema.json`):
+it carries a machine-readable `code` (e.g. `SOURCE_MISSING`,
+`VERIFIER_SEMANTIC_FAIL`), structured `needed_inputs` on `need_input`, and only
+host-safe relative refs — never absolute paths, raw prompts, the full Context
+Packet, or the internal sub-agent graph. `heimdal hermes capabilities` reports
+what the host integration supports.
 
 ### Backend and model selection
 

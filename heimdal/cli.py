@@ -7,8 +7,10 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal run --input <task.json>
     heimdal run --instruction "..."
     heimdal eval run
+    heimdal verify --task <task.json> --answer <answer.json>
     heimdal openclaw run --input <openclaw_payload.json>
     heimdal hermes run --input <hermes_payload.json>
+    heimdal hermes capabilities [--json]
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -29,7 +31,7 @@ from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
 from heimdal.core import eval_runner, patch_manager
 from heimdal.core.runtime import Runtime
-from heimdal.hardware.profiler import full_profile
+from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
 from heimdal.retrieval.truth_store import TruthStore
 from heimdal.storage import Storage
@@ -140,6 +142,41 @@ def cmd_eval(args) -> int:
     return 0 if summary["must_pass_all_passed"] else 1
 
 
+# -- verify ----------------------------------------------------------------
+def _answer_text(answer_doc) -> str:
+    """Extract the candidate answer text from a loaded answer file."""
+    if isinstance(answer_doc, dict) and "answer" in answer_doc:
+        return str(answer_doc["answer"])
+    if isinstance(answer_doc, str):
+        return answer_doc
+    return json.dumps(answer_doc)
+
+
+def cmd_verify(args) -> int:
+    config = load_config(args.manifest)
+    runtime = Runtime(
+        config,
+        prefer_backend=_prefer_backend(args),
+        model_override=args.model,
+        verifier_override=args.verifier,
+    )
+    envelope = Storage.read_json(args.task)
+    result = runtime.verify_envelope(envelope, _answer_text(Storage.read_json(args.answer)))
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(f"status  : {result['status']}")
+        print(f"code    : {result['code']}")
+        print(f"score   : {result['score']}")
+        print(f"verifier: {result['verifier']['backend']}")
+        for defect in result["defects"]:
+            print(f"  defect: ({defect['severity']}) {defect['message']}")
+        print(f"repro   : {result['repro_pack_ref']}")
+        print(f"trace   : {result['trace_pack_ref']}")
+    return 0 if result["status"] == "pass" else 1
+
+
 # -- openclaw --------------------------------------------------------------
 def cmd_openclaw(args) -> int:
     config = load_config(args.manifest)
@@ -161,10 +198,11 @@ def cmd_openclaw(args) -> int:
             f"(openclaw {result['openclaw_task_id']})"
         )
         print(f"summary : {result['summary']}")
+        if result.get("code"):
+            print(f"code    : {result['code']}")
         for question in result.get("questions", []):
             print(f"  question: {question}")
-        if result.get("callback_delivered"):
-            print(f"callback: {result['callback_delivered']}")
+        _print_callback(result.get("callback_delivery"))
         if result.get("repro_pack_ref"):
             print(f"repro   : {result['repro_pack_ref']}")
         if result.get("trace_pack_ref"):
@@ -173,8 +211,41 @@ def cmd_openclaw(args) -> int:
 
 
 # -- hermes ----------------------------------------------------------------
-def cmd_hermes(args) -> int:
+def _print_callback(delivery) -> None:
+    if delivery:
+        print(f"callback: {delivery['status']} -> {delivery['target_ref']}")
+
+
+def cmd_hermes_capabilities(args) -> int:
     config = load_config(args.manifest)
+    ollama = detect_ollama(config)
+    capabilities = {
+        "heimdal_version": __version__,
+        "supported_backends": ["offline", "ollama"],
+        "supported_verifiers": ["rule_based", "hybrid"],
+        "supports_need_input": True,
+        "supports_needed_inputs": True,
+        "supports_callback": True,
+        "supports_verify_only": True,
+        "supports_hermes_adapter": True,
+        "models": ollama["models"],
+    }
+    if args.json:
+        print(json.dumps(capabilities, indent=2))
+    else:
+        for key, value in capabilities.items():
+            print(f"  {key:<22}: {value}")
+    return 0
+
+
+def cmd_hermes(args) -> int:
+    if args.hermes_command == "capabilities":
+        return cmd_hermes_capabilities(args)
+
+    config = load_config(args.manifest)
+    if not args.input:
+        print("error: 'hermes run' requires --input", file=sys.stderr)
+        return 2
     payload = Storage.read_json(args.input)
     runtime = Runtime(
         config,
@@ -188,6 +259,7 @@ def cmd_hermes(args) -> int:
         print(json.dumps(result, indent=2, default=str))
     else:
         print(f"status  : {result['status']}")
+        print(f"code    : {result['code']}")
         print(f"session : {result['hermes_session_id']}")
         print(
             f"task    : {result['heimdal_task_id']} "
@@ -197,8 +269,7 @@ def cmd_hermes(args) -> int:
         for question in result.get("questions", []):
             print(f"  question: {question}")
         print(f"verifier: {result['verifier']['backend']}")
-        if result.get("callback_delivered"):
-            print(f"callback: {result['callback_delivered']}")
+        _print_callback(result.get("callback_delivery"))
         if result.get("repro_pack_ref"):
             print(f"repro   : {result['repro_pack_ref']}")
         if result.get("trace_pack_ref"):
@@ -337,6 +408,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--manifest", help="path to the Heimdal manifest")
     p_eval.set_defaults(func=cmd_eval)
 
+    p_verify = sub.add_parser(
+        "verify", help="verify a host-supplied candidate answer against a task"
+    )
+    p_verify.add_argument(
+        "--task", required=True, help="path to a Host Task Envelope JSON file"
+    )
+    p_verify.add_argument(
+        "--answer", required=True, help="path to a candidate answer JSON file"
+    )
+    p_verify.add_argument("--offline", action="store_true", help="force the offline backend")
+    p_verify.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
+    p_verify.add_argument("--model", help="override the worker model")
+    p_verify.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="override the verifier mode"
+    )
+    p_verify.add_argument(
+        "--json", action="store_true", help="emit the verification result as JSON"
+    )
+    p_verify.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_verify.set_defaults(func=cmd_verify)
+
     p_oc = sub.add_parser("openclaw", help="run a task from an OpenClaw payload")
     p_oc.add_argument("openclaw_command", choices=["run"])
     p_oc.add_argument(
@@ -353,9 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_oc.set_defaults(func=cmd_openclaw)
 
     p_hermes = sub.add_parser("hermes", help="run a task from a Hermes payload")
-    p_hermes.add_argument("hermes_command", choices=["run"])
+    p_hermes.add_argument("hermes_command", choices=["run", "capabilities"])
     p_hermes.add_argument(
-        "--input", required=True, help="path to a Hermes payload JSON file"
+        "--input", help="path to a Hermes payload JSON file (required for 'run')"
     )
     p_hermes.add_argument("--offline", action="store_true", help="force the offline backend")
     p_hermes.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")

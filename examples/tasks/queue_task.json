@@ -1,0 +1,33 @@
+{
+  "host": {
+    "type": "cli",
+    "host_task_id": "queue-task-001",
+    "source_agent": null,
+    "callback": {}
+  },
+  "role_binding": {
+    "role_id": "general",
+    "risk_mode": "balanced",
+    "privacy_mode": "local_only",
+    "output_profiles": [
+      "markdown"
+    ]
+  },
+  "task_request": {
+    "task_id": "queue-task-001",
+    "title": "Explain a queue",
+    "instruction": "Explain what a queue data structure is and how it behaves.",
+    "inputs": {},
+    "constraints": {
+      "max_words": 120
+    },
+    "priority": "P2",
+    "budget": {
+      "quality_level": "B2"
+    },
+    "expected_outputs": [
+      "markdown_response"
+    ]
+  },
+  "runtime_hints": {}
+}

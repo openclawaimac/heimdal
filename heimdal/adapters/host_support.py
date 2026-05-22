@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 
-from heimdal.core import repro_trace
+from heimdal.core import repro_trace, status_codes
 
 
 def read_answer(result: dict) -> str:
@@ -58,10 +58,11 @@ def host_safe_artifacts(artifacts, omit=("context_packet",)) -> list[dict]:
 def deliver_callback(payload: dict, host_result: dict, runtime):
     """Write a host result to a file callback under storage/workspace.
 
-    Returns ``(path, events)``: ``path`` is the delivered file (or ``None`` when
-    no callback was requested or delivery failed), and ``events`` are trace
-    events recording the delivery for folding back into the run's Trace Pack.
-    Only the sanitized target name is traced -- never the result payload.
+    Returns ``(callback_delivery, events)``: ``callback_delivery`` is a
+    host-safe dict -- ``{status, target_ref}`` (plus ``code`` on failure) -- or
+    ``None`` when no callback was requested. ``events`` are trace events
+    recording the delivery for folding back into the run's Trace Pack. Only the
+    sanitized relative target ref is exposed -- never an absolute path.
 
     Directory components in the requested name are stripped, so an external
     payload cannot write outside the sandboxed workspace.
@@ -70,8 +71,8 @@ def deliver_callback(payload: dict, host_result: dict, runtime):
     if not requested:
         return None, []
     safe_name = os.path.basename(str(requested)) or "result.json"
-    target = os.path.join("workspace", safe_name)
-    events = [repro_trace.trace_event("callback_delivery_start", target=target)]
+    target_ref = f"workspace/{safe_name}"
+    events = [repro_trace.trace_event("callback_delivery_start", target=target_ref)]
     path = runtime.storage.path("workspace", safe_name)
     try:
         with open(path, "w", encoding="utf-8") as fh:
@@ -79,9 +80,18 @@ def deliver_callback(payload: dict, host_result: dict, runtime):
     except OSError as exc:
         events.append(
             repro_trace.trace_event(
-                "callback_delivery_error", target=target, error=str(exc)
+                "callback_delivery_error", target=target_ref, error=str(exc)
             )
         )
-        return None, events
-    events.append(repro_trace.trace_event("callback_delivery_success", target=target))
-    return path, events
+        return (
+            {
+                "status": "failed",
+                "target_ref": target_ref,
+                "code": status_codes.CALLBACK_DELIVERY_FAILED,
+            },
+            events,
+        )
+    events.append(
+        repro_trace.trace_event("callback_delivery_success", target=target_ref)
+    )
+    return {"status": "success", "target_ref": target_ref}, events

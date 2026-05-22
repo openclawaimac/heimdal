@@ -1,13 +1,14 @@
 """A minimal JSON Schema validator.
 
 Supports the subset of draft 2020-12 used by the Heimdal schemas: type,
-required, enum, properties, items, minimum, maximum, additionalProperties.
-Kept in-repo to avoid an external dependency.
+required, enum, properties, items, pattern, minimum, maximum,
+additionalProperties. Kept in-repo to avoid an external dependency.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -48,6 +49,13 @@ def _validate(value: Any, schema: dict, path: str, errors: list[str]) -> None:
 
     if "enum" in schema and value not in schema["enum"]:
         errors.append(f"{path or '<root>'}: value {value!r} not in enum {schema['enum']}")
+
+    if "pattern" in schema and isinstance(value, str):
+        if re.search(schema["pattern"], value) is None:
+            errors.append(
+                f"{path or '<root>'}: value {value!r} does not match pattern "
+                f"{schema['pattern']!r}"
+            )
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
