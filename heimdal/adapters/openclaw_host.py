@@ -12,40 +12,9 @@ back, and delivers the result to a file callback when one is requested
 
 from __future__ import annotations
 
-import json
-import os
-
+from heimdal.adapters.host_support import deliver_callback, read_answer
 from heimdal.adapters.openclaw_adapter import OpenClawAdapter
 from heimdal.core.runtime import Runtime
-
-
-def _read_answer(result: dict) -> str:
-    """Return the response artifact's text, if the run produced one."""
-    for artifact in result.get("artifacts", []):
-        if artifact.get("type") == "response":
-            try:
-                with open(artifact["path"], "r", encoding="utf-8") as fh:
-                    return fh.read()
-            except OSError:
-                return ""
-    return ""
-
-
-def _deliver_callback(payload: dict, oc_result: dict, runtime: Runtime) -> str | None:
-    """Write the OpenClaw result to a file callback, if one is requested.
-
-    Callback files are always delivered under ``storage/workspace``; directory
-    components in the requested name are stripped, so an external payload
-    cannot write outside the sandboxed workspace.
-    """
-    requested = (payload.get("callback") or {}).get("file")
-    if not requested:
-        return None
-    safe_name = os.path.basename(str(requested)) or "openclaw_result.json"
-    path = runtime.storage.path("workspace", safe_name)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(oc_result, fh, indent=2, sort_keys=True, default=str)
-    return path
 
 
 def handle(payload: dict, runtime: Runtime | None = None) -> dict:
@@ -61,6 +30,6 @@ def handle(payload: dict, runtime: Runtime | None = None) -> dict:
     runtime = runtime or Runtime()
     result = runtime.run_envelope(envelope)
     oc_result = adapter.from_heimdal_result(result)
-    oc_result["answer"] = _read_answer(result)
-    oc_result["callback_delivered"] = _deliver_callback(payload, oc_result, runtime)
+    oc_result["answer"] = read_answer(result)
+    oc_result["callback_delivered"] = deliver_callback(payload, oc_result, runtime)
     return oc_result

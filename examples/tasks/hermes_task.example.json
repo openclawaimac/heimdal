@@ -1,0 +1,27 @@
+{
+  "hermes_session_id": "hermes-sess-2026-001",
+  "invocation_id": "inv-0007",
+  "from_agent": "Hermes",
+  "role": "research",
+  "request": {
+    "id": "hermes-0007-t1",
+    "title": "Summarize Heimdal modes",
+    "instruction": "Using local sources, summarize Heimdal's Work, Dream, and Mirror modes.",
+    "inputs": {},
+    "constraints": {
+      "max_words": 150
+    },
+    "budget": {
+      "quality_level": "B2"
+    },
+    "output_profiles": ["markdown"],
+    "expected_outputs": ["markdown_response"]
+  },
+  "policy": {
+    "privacy_mode": "local_only",
+    "risk_mode": "conservative"
+  },
+  "callback": {
+    "file": "hermes_result.json"
+  }
+}

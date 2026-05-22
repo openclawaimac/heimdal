@@ -8,6 +8,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal run --instruction "..."
     heimdal eval run
     heimdal openclaw run --input <openclaw_payload.json>
+    heimdal hermes run --input <hermes_payload.json>
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -23,6 +24,7 @@ import sys
 
 from heimdal import __version__
 from heimdal.adapters.cli_adapter import CLIAdapter
+from heimdal.adapters.hermes_host import handle as run_hermes
 from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
 from heimdal.core import eval_runner, patch_manager
@@ -170,6 +172,40 @@ def cmd_openclaw(args) -> int:
     return 0 if result["outcome"] in ("pass", "need_input") else 1
 
 
+# -- hermes ----------------------------------------------------------------
+def cmd_hermes(args) -> int:
+    config = load_config(args.manifest)
+    payload = Storage.read_json(args.input)
+    runtime = Runtime(
+        config,
+        prefer_backend=_prefer_backend(args),
+        model_override=args.model,
+        verifier_override=args.verifier,
+    )
+    result = run_hermes(payload, runtime)
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print(f"status  : {result['status']}")
+        print(f"session : {result['hermes_session_id']}")
+        print(
+            f"task    : {result['heimdal_task_id']} "
+            f"(invocation {result['invocation_id']})"
+        )
+        print(f"message : {result['message']}")
+        for question in result.get("questions", []):
+            print(f"  question: {question}")
+        print(f"verifier: {result['verifier']['backend']}")
+        if result.get("callback_delivered"):
+            print(f"callback: {result['callback_delivered']}")
+        if result.get("repro_pack_ref"):
+            print(f"repro   : {result['repro_pack_ref']}")
+        if result.get("trace_pack_ref"):
+            print(f"trace   : {result['trace_pack_ref']}")
+    return 0 if result["status"] in ("pass", "need_input") else 1
+
+
 # -- patch -----------------------------------------------------------------
 def cmd_patch(args) -> int:
     config = load_config(args.manifest)
@@ -315,6 +351,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_oc.add_argument("--json", action="store_true", help="emit the OpenClaw result as JSON")
     p_oc.add_argument("--manifest", help="path to the Heimdal manifest")
     p_oc.set_defaults(func=cmd_openclaw)
+
+    p_hermes = sub.add_parser("hermes", help="run a task from a Hermes payload")
+    p_hermes.add_argument("hermes_command", choices=["run"])
+    p_hermes.add_argument(
+        "--input", required=True, help="path to a Hermes payload JSON file"
+    )
+    p_hermes.add_argument("--offline", action="store_true", help="force the offline backend")
+    p_hermes.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
+    p_hermes.add_argument("--model", help="override the worker model")
+    p_hermes.add_argument(
+        "--verifier", choices=["rule_based", "hybrid"], help="override the verifier mode"
+    )
+    p_hermes.add_argument("--json", action="store_true", help="emit the Hermes result as JSON")
+    p_hermes.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_hermes.set_defaults(func=cmd_hermes)
 
     p_patch = sub.add_parser("patch", help="patch tools")
     p_patch.add_argument("patch_command", choices=["validate"])
