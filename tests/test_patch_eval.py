@@ -55,6 +55,9 @@ class EvalTests(unittest.TestCase):
         for field in ("heimdal_version", "backend", "manifest_path", "platform"):
             self.assertIn(field, metadata)
         self.assertEqual(metadata["backend"], "offline")
+        # Default run is rule_based; no semantic verifier model.
+        self.assertEqual(metadata["verifier_backend"], "rule_based")
+        self.assertIsNone(metadata["semantic_verifier_model"])
 
 
 if __name__ == "__main__":

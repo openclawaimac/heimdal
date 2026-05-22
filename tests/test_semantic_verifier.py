@@ -6,13 +6,14 @@ deterministic hard fail.
 """
 
 import json
+import os
 import tempfile
 import unittest
 
 from tests.helpers import temp_config
 
 from heimdal import jsonschema_min
-from heimdal.core import model_router, verifier
+from heimdal.core import eval_runner, model_router, verifier
 from heimdal.core.runtime import Runtime
 from heimdal.models.offline import OfflineBackend
 from heimdal.storage import Storage
@@ -198,6 +199,33 @@ class HybridRuntimeTests(unittest.TestCase):
         repro = Storage.read_json(result["repro_pack"]["path"])
         self.assertEqual(repro["params"]["verifier_backend"], "hybrid")
         self.assertIsNotNone(repro["params"]["semantic_verifier_model"])
+
+
+class HybridEvalTests(unittest.TestCase):
+    """The --verifier override must reach eval execution and the summary."""
+
+    def test_hybrid_eval_reports_hybrid_metadata_and_runs_semantic_verifier(self):
+        runtime = Runtime(
+            temp_config(tempfile.mkdtemp()),
+            prefer_backend="offline",
+            verifier_override="hybrid",
+        )
+        summary = eval_runner.run_evals(runtime)
+
+        meta = summary["metadata"]
+        self.assertEqual(meta["verifier_backend"], "hybrid")
+        self.assertIsNotNone(meta["semantic_verifier_model"])
+        self.assertEqual(summary["pass_rate"], 1.0)
+
+        # A B2 eval task must actually exercise the semantic verifier.
+        trace_dir = runtime.storage.path("logs/trace_packs")
+        ran_semantic = False
+        for name in os.listdir(trace_dir):
+            trace = Storage.read_json(os.path.join(trace_dir, name))
+            if any(e["name"] == "semantic_verify" for e in trace["events"]):
+                ran_semantic = True
+                break
+        self.assertTrue(ran_semantic, "no eval trace recorded a semantic_verify event")
 
 
 if __name__ == "__main__":

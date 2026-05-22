@@ -11,6 +11,7 @@ import json
 import os
 
 from heimdal import __version__
+from heimdal.core import model_router
 from heimdal.core.constants import PASS
 from heimdal.core.runtime import Runtime
 from heimdal.ids import new_id, now_compact, now_iso, repo_root
@@ -91,14 +92,22 @@ def _previous_pass_rate(runtime: Runtime) -> float | None:
 
 
 def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
-    """Backend/model/platform facts describing how an eval run was executed."""
+    """Backend/model/platform facts describing how an eval run was executed.
+
+    verifier_backend / semantic_verifier_model describe the run-level verifier
+    configuration, not one sampled task (B0/B1 tasks never go hybrid even when
+    the run is hybrid, so sampling a single task would mislead).
+    """
     backend = runtime.backend.name
+    verifier_backend, semantic_verifier_model = model_router.resolve_run_verifier(
+        runtime.config, runtime.backend, runtime.verifier_override
+    )
     return {
         "heimdal_version": __version__,
         "backend": backend,
         "worker_model": sample_metrics.get("worker_model"),
-        "verifier_backend": sample_metrics.get("verifier_backend"),
-        "semantic_verifier_model": sample_metrics.get("semantic_verifier_model"),
+        "verifier_backend": verifier_backend,
+        "semantic_verifier_model": semantic_verifier_model,
         "ollama_endpoint": (
             runtime.config.ollama.get("base_url") if backend == "ollama" else None
         ),

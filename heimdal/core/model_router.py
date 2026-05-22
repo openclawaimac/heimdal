@@ -31,6 +31,28 @@ def _budget_at_least(level: str, minimum: str) -> bool:
     return _BUDGET_RANK.get(level, 1) >= _BUDGET_RANK.get(minimum, 2)
 
 
+def _hybrid_requested(config, verifier_override: str | None) -> bool:
+    """Whether the run is configured for the hybrid verifier (budget aside)."""
+    verifier_cfg = config.verifier
+    mode = verifier_override or verifier_cfg.get("mode", RULE_BASED)
+    return mode == HYBRID or verifier_cfg.get("semantic_model_verifier_enabled", False)
+
+
+def resolve_run_verifier(config, backend, verifier_override: str | None = None):
+    """Run-level verifier mode and semantic model, independent of task budget.
+
+    Per-task routing still gates the hybrid verifier on B2-B4; this reports how
+    the run as a whole is configured, for eval-run metadata.
+    """
+    if not _hybrid_requested(config, verifier_override):
+        return RULE_BASED, None
+    installed = None if backend.name == OfflineBackend.name else set(backend.list_models())
+    semantic_model = config.verifier.get("semantic_verifier_model") or _resolve_model(
+        "verifier", installed, config
+    )
+    return HYBRID, semantic_model
+
+
 def _resolve_model(profile_name: str, installed: set[str] | None, config) -> str:
     """Resolve a concrete model for a profile.
 
@@ -92,17 +114,14 @@ def route(
 
     # Verification is rule-based by default. Hybrid adds a model-based semantic
     # verifier for B2-B4 tasks; the offline backend mocks it deterministically.
-    verifier_cfg = config.verifier
-    mode = verifier_override or verifier_cfg.get("mode", RULE_BASED)
-    hybrid_requested = mode == HYBRID or verifier_cfg.get(
-        "semantic_model_verifier_enabled", False
+    hybrid = _hybrid_requested(config, verifier_override) and _budget_at_least(
+        quality_level, "B2"
     )
-    hybrid = hybrid_requested and _budget_at_least(quality_level, "B2")
     verifier_backend = HYBRID if hybrid else RULE_BASED
 
     if hybrid:
         semantic_verifier_model = (
-            verifier_cfg.get("semantic_verifier_model")
+            config.verifier.get("semantic_verifier_model")
             or _resolve_model("verifier", installed, config)
         )
     else:
