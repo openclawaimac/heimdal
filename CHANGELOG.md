@@ -1,5 +1,79 @@
 # Changelog
 
+## v0.6.0 — v0.6.2 — Adaptive Runtime Core
+
+Three coordinated releases that let Heimdal understand the machine it
+runs on, classify available compute, and pick a runtime configuration
+that fits -- without giving up local-first.
+
+### v0.6.0 — Hardware Auto-Tuner & Capability Matrix (commit `b5a7371`)
+
+`heimdal doctor` now writes a real capability matrix to
+`storage/logs/capability_matrix/<ts>.json` and (with `--write-profile`)
+a canonical copy at `storage/runtime/capability_matrix.json`. The matrix
+records platform, CPU/RAM/disk, GPU/Metal/ROCm accelerators, Ollama
+endpoint + installed models, and per-model capability smoke tests
+(basic_generation, json_output, semantic_judgment). Embedding models
+are skipped (a generation test on `nomic-embed-text` would falsely fail).
+
+New profiler features: ROCm best-effort detection via `rocm-smi`, a
+WSL2 storage-root warning for `/mnt/c..f`, and `recommend_profile()`
+that maps hardware -> profile name (`cpu_only` / `dev` / `single_gpu`
+/ `pipeline` / `factory`).
+
+CLI additions: `heimdal doctor --profile` (print only the profile
+name), `--write-profile`, `--all-models`, `--benchmark-light`.
+
+### v0.6.1 — Model Role Assignment (commit `48c1197`)
+
+`heimdal models assign --write` decides which installed Ollama model
+fills which internal role (worker / verifier / semantic_verifier /
+brain / coder), persists the choice to
+`storage/runtime/role_assignments.json`, and the Runtime reads that on
+startup so `heimdal run demo` works without an explicit `--model` on
+a fresh machine.
+
+- Roles use the new `model_roles:` manifest block with `preferred` +
+  `min_capabilities`. First installed preferred model passing the
+  capability bar wins; otherwise any worker_candidate; otherwise safe
+  defaults (rule_based for verifier, disabled for brain/coder).
+- Operator pins (`heimdal models pin --role worker --model X`) live
+  at `storage/runtime/model_pins.json` and override auto-assignment
+  when the pinned model is installed and not an embedding model.
+- Explicit `--model` always wins. Trace/repro records the choice as
+  `assignment_source` (explicit_cli / auto_tuner / operator_pin /
+  fallback).
+- CLI: `heimdal models {list, capabilities, assign, roles, pin, unpin}`.
+
+### v0.6.2 — Runtime Profiles
+
+Profiles layer hardware-adaptive budgets on top of the static manifest:
+`max_context_tokens`, `default_quality_level`, `max_repair_iterations`,
+and Dream/Mirror enablement defaults. Layering:
+
+    BUILTIN_PROFILES   <-  shipped sane defaults
+    manifest.runtime_profiles  <-  per-installation overrides
+    storage/runtime/runtime_profile.json  <-  active profile + source
+
+The Runtime reads the active profile at startup and threads its limits
+into `build_contract` as `profile_overrides`, so a task without an
+explicit `budget.quality_level` falls through to the profile default.
+Per-task constraints in the envelope always win.
+
+CLI: `heimdal profile {show, detect, write, set <name>, explain
+[<name>]}`. Trace/repro metrics gain `runtime_profile`,
+`profile_source`, and `profile_limits` so every run records which
+budget vocabulary it used.
+
+### Combined guarantees
+
+- Local-first preserved: no cloud dependency, no daemon.
+- Adaptive behavior is opt-in via `--write-profile` / `models assign
+  --write`; without it, Heimdal still works exactly as before.
+- Explicit CLI flags continue to override auto-detection.
+- No multi-GPU scheduling, no REST/MCP, no systemd runner, no
+  finetuning, no new adapters in this block.
+
 ## v0.5.0 — v0.5.1 — Teacher Comparison Core
 
 Two coordinated releases that let Heimdal compare local outputs to an

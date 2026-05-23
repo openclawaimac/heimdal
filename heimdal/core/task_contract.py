@@ -35,15 +35,25 @@ def _requires_schema(task_request: dict) -> bool:
     return any("json" in str(o).lower() or "schema" in str(o).lower() for o in outputs)
 
 
-def build_contract(envelope: dict, role: dict, config) -> dict:
-    """Build and schema-validate a Task Contract from a Host Task Envelope."""
+def build_contract(envelope: dict, role: dict, config,
+                   *, profile_overrides: dict | None = None) -> dict:
+    """Build and schema-validate a Task Contract from a Host Task Envelope.
+
+    ``profile_overrides`` (v0.6.2) supplies hardware-adaptive defaults
+    from the active runtime profile. Per-task ``budget`` constraints in
+    the envelope still win; the profile only fills the gaps left by the
+    manifest's static defaults.
+    """
     task_request = envelope.get("task_request", {}) or {}
     constraints = dict(task_request.get("constraints", {}) or {})
     budgets = config.budgets
+    profile_overrides = profile_overrides or {}
 
     requested = task_request.get("budget", {}) or {}
-    quality_level = requested.get("quality_level") or budgets.get(
-        "default_quality_level", "B1"
+    quality_level = (
+        requested.get("quality_level")
+        or profile_overrides.get("default_quality_level")
+        or budgets.get("default_quality_level", "B1")
     )
     if quality_level not in QUALITY_LEVELS:
         quality_level = "B1"
@@ -79,11 +89,19 @@ def build_contract(envelope: dict, role: dict, config) -> dict:
         "budget": {
             "quality_level": quality_level,
             "max_iterations": int(
-                requested.get("max_iterations", budgets.get("max_repair_iterations", 2))
+                requested.get(
+                    "max_iterations",
+                    profile_overrides.get("max_repair_iterations")
+                    or budgets.get("max_repair_iterations", 2),
+                )
                 + 1
             ),
             "max_input_tokens": int(
-                requested.get("max_input_tokens", budgets.get("max_input_tokens", 8000))
+                requested.get(
+                    "max_input_tokens",
+                    profile_overrides.get("max_context_tokens")
+                    or budgets.get("max_input_tokens", 8000),
+                )
             ),
             "max_output_tokens": int(
                 requested.get("max_output_tokens", budgets.get("max_output_tokens", 2000))

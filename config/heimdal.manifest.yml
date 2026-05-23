@@ -21,6 +21,17 @@ model_profiles:
   coder:
     candidates: [qwen3-coder:30b, qwen2.5-coder:14b]
     required_capabilities: [code_generation, json_output]
+runtime_profiles:
+  # v0.6.2: hardware-adaptive budgets. The profile name resolves via
+  # `heimdal profile detect` (which reads the capability matrix) OR
+  # `heimdal profile set <name>` for a manual override. Heimdal ships
+  # builtin defaults in hardware/runtime_profile.py; entries here ADD or
+  # OVERRIDE specific fields per installation.
+  cpu_only: {}
+  dev: {}
+  single_gpu: {}
+  pipeline: {}
+  factory: {}
 model_roles:
   # v0.6.1: role-to-model assignment with capability gating. preferred is
   # walked in order; the first installed model whose capability-matrix entry

@@ -27,6 +27,7 @@ from heimdal.core.scheduler import WORK, Scheduler
 from heimdal.core.task_contract import build_contract
 from heimdal.hardware.profiler import quick_profile
 from heimdal.ids import new_id, repo_root, sha256_obj
+from heimdal.hardware import runtime_profile
 from heimdal.hardware.role_assigner import assigned_worker_model
 from heimdal.models.base import select_backend
 from heimdal.skills.registry import SkillRegistry
@@ -101,6 +102,13 @@ class Runtime:
         self.scheduler = Scheduler(self.config)
         # Hardware does not change during a session; profile once and reuse.
         self.hardware_profile = quick_profile(self.config)
+        # v0.6.2: active runtime profile (auto / manual / manifest). Limits
+        # are layered onto task contracts as profile_overrides so a fresh
+        # machine downsizes budgets without an explicit --quality flag.
+        self.runtime_profile = runtime_profile.active(
+            self.storage, self.config,
+            manifest_profiles=self.config.runtime_profiles,
+        )
 
     # -- public API --------------------------------------------------------
     def run_envelope(self, envelope: dict, mode: str = WORK) -> dict:
@@ -108,7 +116,7 @@ class Runtime:
         started = time.time()
         validated = intake.intake(envelope, self.config)
         role = resolve_role(validated.get("role_binding", {}))
-        contract = build_contract(validated, role, self.config)
+        contract = build_contract(validated, role, self.config, profile_overrides=runtime_profile.task_contract_overrides(self.runtime_profile["limits"]))
 
         self.scheduler.submit(mode, contract["task_id"])
         allowed, reason = self.scheduler.can_run(mode)
@@ -157,6 +165,9 @@ class Runtime:
             "verifier_backend": routing["verifier_backend"],
             "semantic_verifier_model": routing["semantic_verifier_model"],
             "assignment_source": self.assignment_source,
+            "runtime_profile": self.runtime_profile["name"],
+            "profile_source": self.runtime_profile["source"],
+            "profile_limits": self.runtime_profile["limits"],
         }
 
         repro = repro_trace.build_repro_pack(
@@ -227,7 +238,7 @@ class Runtime:
         started = time.time()
         validated = intake.intake(envelope, self.config)
         role = resolve_role(validated.get("role_binding", {}))
-        contract = build_contract(validated, role, self.config)
+        contract = build_contract(validated, role, self.config, profile_overrides=runtime_profile.task_contract_overrides(self.runtime_profile["limits"]))
 
         trace = repro_trace.TraceBuilder(contract["task_id"])
         trace.event("verify_intake_ok", host=validated.get("host", {}).get("type"))

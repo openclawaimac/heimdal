@@ -68,6 +68,10 @@ class Config:
         return self.manifest.get("model_roles", {})
 
     @property
+    def runtime_profiles(self) -> dict:
+        return self.manifest.get("runtime_profiles", {})
+
+    @property
     def scheduler(self) -> dict:
         return self.manifest.get("scheduler", {})
 

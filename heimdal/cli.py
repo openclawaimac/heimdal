@@ -45,6 +45,7 @@ from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.dream import runner as dream_runner
 from heimdal.hardware import capability_matrix, role_assigner
+from heimdal.hardware import runtime_profile as runtime_profile_mod
 from heimdal.mirror import runner as mirror_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
@@ -505,6 +506,78 @@ def cmd_hermes(args) -> int:
         if result.get("trace_pack_ref"):
             print(f"trace   : {result['trace_pack_ref']}")
     return 0 if result["status"] in ("pass", "need_input") else 1
+
+
+# -- profile ---------------------------------------------------------------
+def cmd_profile(args) -> int:
+    config = load_config(args.manifest)
+    storage = Storage(config.storage_root).ensure()
+    command = args.profile_command
+
+    if command == "detect":
+        name = runtime_profile_mod.detect(config)
+        if args.json:
+            print(json.dumps({"name": name}, indent=2))
+        else:
+            print(name)
+        return 0
+
+    if command == "show":
+        active = runtime_profile_mod.active(
+            storage, config,
+            manifest_profiles=config.runtime_profiles,
+        )
+        if args.json:
+            print(json.dumps(active, indent=2))
+        else:
+            print(f"name   : {active['name']}")
+            print(f"source : {active['source']}")
+            for key, value in active["limits"].items():
+                print(f"  {key:<26}: {value}")
+        return 0
+
+    if command == "explain":
+        name = args.profile_name or runtime_profile_mod.detect(config)
+        if name not in runtime_profile_mod.PROFILES:
+            print(
+                f"error: unknown profile {name!r}; one of "
+                f"{runtime_profile_mod.PROFILES}", file=sys.stderr,
+            )
+            return 2
+        print(runtime_profile_mod.explain(
+            name, manifest_profiles=config.runtime_profiles,
+        ))
+        return 0
+
+    if command == "set":
+        if not args.profile_name:
+            print("error: 'profile set' requires <profile_name>",
+                  file=sys.stderr)
+            return 2
+        try:
+            record = runtime_profile_mod.write(
+                storage, args.profile_name,
+                source=runtime_profile_mod.SOURCE_MANUAL,
+                manifest_profiles=config.runtime_profiles,
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"profile set: {record['name']} (source=manual)")
+        return 0
+
+    if command == "write":
+        # Auto-detect + write.
+        name = runtime_profile_mod.detect(config)
+        record = runtime_profile_mod.write(
+            storage, name,
+            source=runtime_profile_mod.SOURCE_AUTO,
+            manifest_profiles=config.runtime_profiles,
+        )
+        print(f"profile written: {record['name']} (source=auto)")
+        return 0
+
+    return 2
 
 
 # -- models ----------------------------------------------------------------
@@ -1418,6 +1491,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bridge.add_argument("--manifest", help="path to the Heimdal manifest")
     p_bridge.set_defaults(func=cmd_bridge)
+
+    p_profile = sub.add_parser(
+        "profile", help="hardware-adaptive runtime profile",
+    )
+    p_profile.add_argument(
+        "profile_command",
+        choices=["show", "detect", "write", "set", "explain"],
+    )
+    p_profile.add_argument(
+        "profile_name", nargs="?",
+        help="profile name (for 'set' / optional for 'explain')",
+    )
+    p_profile.add_argument("--json", action="store_true")
+    p_profile.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_profile.set_defaults(func=cmd_profile)
 
     p_models = sub.add_parser(
         "models", help="inspect installed models + manage role assignments",
