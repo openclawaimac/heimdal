@@ -27,6 +27,7 @@ from heimdal.core.scheduler import WORK, Scheduler
 from heimdal.core.task_contract import build_contract
 from heimdal.hardware.profiler import quick_profile
 from heimdal.ids import new_id, repo_root, sha256_obj
+from heimdal.hardware.role_assigner import assigned_worker_model
 from heimdal.models.base import select_backend
 from heimdal.skills.registry import SkillRegistry
 from heimdal.storage import Storage
@@ -86,6 +87,15 @@ class Runtime:
         self.storage = Storage(self.config.storage_root).ensure()
         _seed_storage(self.storage)
         self.backend = select_backend(self.config, prefer=prefer_backend)
+        # v0.6.1: when no explicit --model is given, fall back to whatever
+        # `heimdal models assign --write` recorded as the worker role.
+        # Explicit CLI / programmatic overrides always win.
+        self.assignment_source = "explicit_cli" if model_override else None
+        if not model_override and self.backend.name == "ollama":
+            assigned_model, source = assigned_worker_model(self.storage)
+            if assigned_model:
+                model_override = assigned_model
+                self.assignment_source = source or "auto_tuner"
         self.model_override = model_override
         self.verifier_override = verifier_override
         self.scheduler = Scheduler(self.config)
@@ -146,6 +156,7 @@ class Runtime:
             "worker_model": routing["worker_model"],
             "verifier_backend": routing["verifier_backend"],
             "semantic_verifier_model": routing["semantic_verifier_model"],
+            "assignment_source": self.assignment_source,
         }
 
         repro = repro_trace.build_repro_pack(

@@ -21,6 +21,27 @@ model_profiles:
   coder:
     candidates: [qwen3-coder:30b, qwen2.5-coder:14b]
     required_capabilities: [code_generation, json_output]
+model_roles:
+  # v0.6.1: role-to-model assignment with capability gating. preferred is
+  # walked in order; the first installed model whose capability-matrix entry
+  # satisfies min_capabilities wins. If none match, the role falls back per
+  # role_assigner.py rules (rule_based for verifier, disabled for brain,
+  # any worker_candidate for worker).
+  verifier:
+    preferred: [qwen3:4b, qwen2.5:3b, llama3.2:3b]
+    min_capabilities: [json_output, semantic_judgment]
+  worker:
+    preferred: [qwen3:8b, qwen2.5:7b, llama3.2:3b]
+    min_capabilities: [basic_generation, json_output]
+  brain:
+    preferred: [qwen3:14b, qwen2.5:14b]
+    min_capabilities: [basic_generation, json_output]
+  semantic_verifier:
+    preferred: [qwen2.5:7b, qwen3:8b]
+    min_capabilities: [json_output, semantic_judgment]
+  coder:
+    preferred: [qwen3-coder:30b, qwen2.5-coder:14b]
+    min_capabilities: [basic_generation, json_output]
 scheduler:
   work_preempts_background: true
   dream_enabled: false

@@ -64,6 +64,10 @@ class Config:
         return self.manifest.get("model_profiles", {})
 
     @property
+    def model_roles(self) -> dict:
+        return self.manifest.get("model_roles", {})
+
+    @property
     def scheduler(self) -> dict:
         return self.manifest.get("scheduler", {})
 

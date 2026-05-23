@@ -44,7 +44,7 @@ from heimdal.config import load_config
 from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.dream import runner as dream_runner
-from heimdal.hardware import capability_matrix
+from heimdal.hardware import capability_matrix, role_assigner
 from heimdal.mirror import runner as mirror_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
@@ -505,6 +505,124 @@ def cmd_hermes(args) -> int:
         if result.get("trace_pack_ref"):
             print(f"trace   : {result['trace_pack_ref']}")
     return 0 if result["status"] in ("pass", "need_input") else 1
+
+
+# -- models ----------------------------------------------------------------
+def _matrix_for(config):
+    """Load the latest stored matrix; rebuild without tests if missing."""
+    storage = Storage(config.storage_root).ensure()
+    path = storage.path("runtime", "capability_matrix.json")
+    if os.path.exists(path):
+        try:
+            return Storage.read_json(path)
+        except (OSError, ValueError):
+            pass
+    # No stored matrix yet; build a quick one without capability tests so
+    # `heimdal models *` works on a fresh install.
+    return capability_matrix.build_matrix(config, run_capability_tests=False)
+
+
+def cmd_models(args) -> int:
+    config = load_config(args.manifest)
+    storage = Storage(config.storage_root).ensure()
+    command = args.models_command
+
+    if command == "list":
+        matrix = _matrix_for(config)
+        ollama = matrix.get("ollama", {})
+        if args.json:
+            print(json.dumps(ollama, indent=2))
+        else:
+            print(f"backend     : ollama (reachable={ollama.get('reachable')})")
+            print(f"endpoint    : {ollama.get('base_url')}")
+            models = ollama.get("models", []) or []
+            if not models:
+                print("models      : (none installed)")
+            else:
+                for model in models:
+                    print(f"  - {model}")
+        return 0
+
+    if command == "capabilities":
+        matrix = _matrix_for(config)
+        caps = matrix.get("model_capabilities", {})
+        if args.json:
+            print(json.dumps(caps, indent=2))
+        else:
+            if not caps:
+                print(
+                    "No per-model capability results yet. Run "
+                    "`heimdal doctor --capability-test --write-profile` first."
+                )
+                return 0
+            for model, entry in caps.items():
+                if entry.get("skipped"):
+                    print(f"  {model}: skipped ({entry.get('reason', '')})")
+                    continue
+                print(
+                    f"  {model}: basic={entry.get('basic_generation', '?')} "
+                    f"json={entry.get('json_output', '?')} "
+                    f"semantic={entry.get('semantic_judgment', '?')} "
+                    f"worker={entry.get('worker_candidate', False)} "
+                    f"verifier={entry.get('semantic_verifier_candidate', False)}"
+                )
+        return 0
+
+    if command == "assign":
+        matrix = _matrix_for(config)
+        pins = role_assigner.load_pins(storage)
+        assignments = role_assigner.assign(
+            matrix, model_roles_cfg=config.model_roles, pins=pins,
+        )
+        if args.write:
+            role_assigner.write_assignments(storage, assignments)
+        if args.json:
+            print(json.dumps(assignments, indent=2))
+        else:
+            print(f"profile : {assignments['profile']}")
+            for role, entry in assignments["assignments"].items():
+                tag = "*" if entry.get("fallback") else " "
+                model = entry.get("model") or "-"
+                print(
+                    f" {tag} {role:<18} backend={entry['backend']:<11} "
+                    f"model={model:<22} ({entry['source']})"
+                )
+            for warning in assignments.get("warnings", []):
+                print(f"  warning: {warning}")
+        return 0
+
+    if command == "roles":
+        assignments = role_assigner.load_assignments(storage)
+        if not assignments:
+            print(
+                "No role assignments yet. Run `heimdal models assign --write`."
+            )
+            return 0
+        if args.json:
+            print(json.dumps(assignments, indent=2))
+        else:
+            for role, entry in assignments["assignments"].items():
+                model = entry.get("model") or "-"
+                print(f"  {role:<18}: {entry['backend']:<11} {model}")
+        return 0
+
+    if command == "pin":
+        if not (args.role and args.model_name):
+            print("error: pin requires --role and --model", file=sys.stderr)
+            return 2
+        role_assigner.write_pin(storage, args.role, args.model_name)
+        print(f"pinned: {args.role} -> {args.model_name}")
+        return 0
+
+    if command == "unpin":
+        if not args.role:
+            print("error: unpin requires --role", file=sys.stderr)
+            return 2
+        role_assigner.write_pin(storage, args.role, None)
+        print(f"unpinned: {args.role}")
+        return 0
+
+    return 2
 
 
 # -- dream -----------------------------------------------------------------
@@ -1300,6 +1418,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bridge.add_argument("--manifest", help="path to the Heimdal manifest")
     p_bridge.set_defaults(func=cmd_bridge)
+
+    p_models = sub.add_parser(
+        "models", help="inspect installed models + manage role assignments",
+    )
+    p_models.add_argument(
+        "models_command",
+        choices=["list", "capabilities", "assign", "roles", "pin", "unpin"],
+    )
+    p_models.add_argument("--role", choices=list(role_assigner.ROLES))
+    p_models.add_argument(
+        "--model", dest="model_name", help="model name (for pin)",
+    )
+    p_models.add_argument(
+        "--write", action="store_true",
+        help="persist storage/runtime/role_assignments.json (for 'assign')",
+    )
+    p_models.add_argument("--json", action="store_true")
+    p_models.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_models.set_defaults(func=cmd_models)
 
     p_dream = sub.add_parser(
         "dream", help="Dream Mode: mine past runs for improvement proposals"
