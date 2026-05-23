@@ -1,0 +1,14 @@
+{
+  "id": "research.truth_vault_qa",
+  "version": "0.1.0",
+  "role": "research",
+  "title": "Truth Vault QA",
+  "description": "Answer factual questions exclusively from the local Truth Vault.",
+  "triggers": ["vault", "truth", "local", "documented", "policy", "exact"],
+  "instructions": [
+    "Treat the Truth Vault as the only source of truth for factual claims.",
+    "Quote the source ref next to any specific figure or policy line.",
+    "If the vault has no matching source, return need_input rather than answering."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

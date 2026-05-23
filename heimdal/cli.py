@@ -19,6 +19,8 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal dream report [--id <dream_run_id>]
     heimdal dream list
     heimdal patch validate <patch_file>
+    heimdal patch {list, show, review, eval, promote --to <ch>, reject --reason "..."}
+    heimdal skill {list, show, search, validate, install, archive, stats}
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
 """
@@ -44,6 +46,8 @@ from heimdal.dream import runner as dream_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
 from heimdal.retrieval.truth_store import TruthStore
+from heimdal.skills import registry as skill_registry
+from heimdal.skills.registry import SkillRegistry
 from heimdal.storage import Storage
 
 
@@ -716,6 +720,131 @@ def cmd_patch(args) -> int:
     return 2
 
 
+# -- skill -----------------------------------------------------------------
+def _skill_registry(config) -> SkillRegistry:
+    storage = Storage(config.storage_root).ensure()
+    return SkillRegistry(storage.path("skills"))
+
+
+def cmd_skill(args) -> int:
+    config = load_config(args.manifest)
+    command = args.skill_command
+
+    if command == "list":
+        registry = _skill_registry(config)
+        skills = registry.load()
+        if args.json:
+            print(json.dumps([s.to_dict() for s in skills], indent=2, default=str))
+        else:
+            if not skills:
+                print("No skills installed.")
+                return 0
+            for skill in skills:
+                perf = skill.performance
+                uses = perf.get("uses", 0)
+                print(
+                    f"  {skill.role:<10} {skill.id:<42} v{skill.version:<6} "
+                    f"uses={uses} passes={perf.get('passes', 0)} "
+                    f"fails={perf.get('fails', 0)}"
+                )
+        return 0
+
+    if command == "show":
+        if not args.skill_arg:
+            print("error: 'skill show' requires <skill_id>", file=sys.stderr)
+            return 2
+        skill = _skill_registry(config).find(args.skill_arg)
+        if skill is None:
+            print(f"error: skill not found: {args.skill_arg}", file=sys.stderr)
+            return 2
+        print(json.dumps(skill.to_dict(), indent=2, default=str))
+        return 0
+
+    if command == "search":
+        if not args.skill_arg:
+            print("error: 'skill search' requires a query", file=sys.stderr)
+            return 2
+        hits = _skill_registry(config).search(args.skill_arg)
+        if args.json:
+            print(json.dumps([s.to_dict() for s in hits], indent=2, default=str))
+        else:
+            if not hits:
+                print(f"No skills match: {args.skill_arg!r}")
+                return 0
+            for skill in hits:
+                print(f"  {skill.id:<42}  {skill.title}")
+        return 0
+
+    if command == "validate":
+        if not args.skill_arg:
+            print("error: 'skill validate' requires <skill_file>", file=sys.stderr)
+            return 2
+        try:
+            skill = Storage.read_json(args.skill_arg)
+        except (OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        errors = skill_registry.validate_skill(skill, config)
+        if errors:
+            print(f"REJECTED: skill is invalid - {args.skill_arg}")
+            for err in errors:
+                print(f"  - {err}")
+            return 1
+        print(f"PASS: skill is valid - {args.skill_arg}")
+        return 0
+
+    if command == "install":
+        if not args.skill_arg:
+            print("error: 'skill install' requires <skill_file>", file=sys.stderr)
+            return 2
+        try:
+            dest = skill_registry.install_skill_file(config, args.skill_arg)
+        except (OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"installed: {os.path.relpath(dest, config.storage_root)}")
+        return 0
+
+    if command == "archive":
+        if not args.skill_arg:
+            print("error: 'skill archive' requires <skill_id>", file=sys.stderr)
+            return 2
+        dest = skill_registry.archive_skill(config, args.skill_arg)
+        if dest is None:
+            print(f"error: skill not found: {args.skill_arg}", file=sys.stderr)
+            return 2
+        print(f"archived: {os.path.relpath(dest, config.storage_root)}")
+        return 0
+
+    if command == "stats":
+        skills = _skill_registry(config).load()
+        active = sum(1 for s in skills if s.performance.get("uses", 0) > 0)
+        total_uses = sum(s.performance.get("uses", 0) for s in skills)
+        total_passes = sum(s.performance.get("passes", 0) for s in skills)
+        report = {
+            "total_skills": len(skills),
+            "active_skills": active,
+            "total_uses": total_uses,
+            "total_passes": total_passes,
+            "by_role": {},
+        }
+        for skill in skills:
+            report["by_role"].setdefault(skill.role, 0)
+            report["by_role"][skill.role] += 1
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            for key, value in report.items():
+                if key == "by_role":
+                    for role, count in sorted(value.items()):
+                        print(f"  role:{role:<10}: {count}")
+                else:
+                    print(f"  {key:<14}: {value}")
+        return 0
+
+    return 2
+
+
 # -- truth -----------------------------------------------------------------
 def cmd_truth(args) -> int:
     config = load_config(args.manifest)
@@ -974,6 +1103,22 @@ def build_parser() -> argparse.ArgumentParser:
     # 'patch_file' doubles as the patch id for lifecycle commands; expose
     # both names so help text is honest.
     p_patch.set_defaults(func=cmd_patch)
+
+    p_skill = sub.add_parser(
+        "skill", help="manage the Skill Library (list/show/search/validate/install/archive/stats)"
+    )
+    p_skill.add_argument(
+        "skill_command",
+        choices=["list", "show", "search", "validate", "install", "archive", "stats"],
+    )
+    p_skill.add_argument(
+        "skill_arg",
+        nargs="?",
+        help="<skill_id> (show/archive), <query> (search), or <skill_file> (validate/install)",
+    )
+    p_skill.add_argument("--json", action="store_true")
+    p_skill.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_skill.set_defaults(func=cmd_skill)
 
     p_truth = sub.add_parser("truth", help="manage the local Truth Vault")
     p_truth.add_argument("truth_command", choices=["list", "add", "search"])

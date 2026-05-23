@@ -1,0 +1,14 @@
+{
+  "id": "business.pricing_policy_explanation",
+  "version": "0.1.0",
+  "role": "business",
+  "title": "Pricing policy explanation",
+  "description": "Explain a pricing or refund policy in plain language, anchored on the source document.",
+  "triggers": ["price", "pricing", "refund", "policy", "tier", "discount"],
+  "instructions": [
+    "Restate the policy in one paragraph the customer can act on.",
+    "Reference the source line for the figure; never round silently.",
+    "Call out edge cases (effective date, regional variations) when the source has them."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

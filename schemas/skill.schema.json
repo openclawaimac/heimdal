@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Skill",
+  "description": "A versioned, selectable, testable instruction bundle used by Context OS. Skills are matched by role + triggers and only the most relevant ones reach the worker prompt.",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "role",
+    "title",
+    "triggers",
+    "instructions"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "version": {"type": "string"},
+    "role": {"type": "string"},
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "triggers": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "instructions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "output_contract": {"type": "object"},
+    "examples": {"type": "array"},
+    "anti_examples": {"type": "array"},
+    "rubric": {"type": "object"},
+    "risk_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "performance": {
+      "type": "object",
+      "properties": {
+        "uses": {"type": "integer"},
+        "passes": {"type": "integer"},
+        "fails": {"type": "integer"},
+        "last_used": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

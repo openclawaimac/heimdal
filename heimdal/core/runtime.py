@@ -28,23 +28,48 @@ from heimdal.core.task_contract import build_contract
 from heimdal.hardware.profiler import quick_profile
 from heimdal.ids import new_id, repo_root, sha256_obj
 from heimdal.models.base import select_backend
+from heimdal.skills.registry import SkillRegistry
 from heimdal.storage import Storage
 
 DEMO_TASK = "examples/tasks/simple_task.json"
 
 
 def _seed_storage(storage: Storage) -> None:
-    """Populate truth/skills from bundled examples on first run."""
-    pairs = [("examples/truth", "truth"), ("examples/skills", "skills")]
-    for src_rel, dst_rel in pairs:
-        src = os.path.join(repo_root(), src_rel)
-        dst = storage.path(dst_rel)
-        if not os.path.isdir(src):
-            continue
-        if os.path.isdir(dst) and os.listdir(dst):
-            continue
-        for name in os.listdir(src):
-            shutil.copy2(os.path.join(src, name), os.path.join(dst, name))
+    """Populate truth/skills from bundled examples on first run.
+
+    Truth files copy flat (one .md/.txt per file). Skills can be organized
+    under role subdirectories (Skill Library 2.0), so the skills copy walks
+    recursively and preserves layout. Existing non-empty destinations are
+    skipped so a user's edits are never overwritten.
+    """
+    src_truth = os.path.join(repo_root(), "examples/truth")
+    dst_truth = storage.path("truth")
+    if os.path.isdir(src_truth) and not (os.path.isdir(dst_truth) and os.listdir(dst_truth)):
+        for name in os.listdir(src_truth):
+            shutil.copy2(os.path.join(src_truth, name), os.path.join(dst_truth, name))
+
+    src_skills = os.path.join(repo_root(), "examples/skills")
+    dst_skills = storage.path("skills")
+    if not os.path.isdir(src_skills):
+        return
+    # "Empty" for skill seeding ignores the role subdirectories the layout
+    # creates up front -- otherwise seed never fires after Storage.ensure().
+    existing = [
+        name for name in os.listdir(dst_skills)
+        if os.path.isfile(os.path.join(dst_skills, name))
+        or (
+            os.path.isdir(os.path.join(dst_skills, name))
+            and os.listdir(os.path.join(dst_skills, name))
+        )
+    ]
+    if existing:
+        return
+    for root, _dirs, files in os.walk(src_skills):
+        rel = os.path.relpath(root, src_skills)
+        dest_root = dst_skills if rel == "." else os.path.join(dst_skills, rel)
+        os.makedirs(dest_root, exist_ok=True)
+        for name in files:
+            shutil.copy2(os.path.join(root, name), os.path.join(dest_root, name))
 
 
 class Runtime:
@@ -145,6 +170,16 @@ class Runtime:
         pack_paths = repro_trace.write_packs(
             self.storage, self.config, repro, trace_pack
         )
+
+        # v0.4.2: bump per-skill usage stats. Pass = the task itself passed
+        # verification; any other status counts as fail for the skill's record.
+        selected_skill_ids = [
+            s["skill_id"] for s in outcome["packet"].get("skills_context", [])
+        ]
+        if selected_skill_ids:
+            SkillRegistry(self.storage.path("skills")).record_usage(
+                selected_skill_ids, passed=outcome["status"] == PASS
+            )
 
         return self._envelope(
             validated=validated,

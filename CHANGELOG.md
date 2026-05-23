@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.4.0 — v0.4.2 — Self-Improvement Core
+
+Three coordinated releases that turn Heimdal from a runtime into a system that
+mines its own history for improvements -- without ever silently changing
+stable behavior.
+
+### v0.4.0 — Dream Mode (commit `ad53be0`)
+
+Heimdal can now scan its own past Trace Packs, eval summaries, and bridge
+failure reports for recurring failure patterns, and emit structured
+improvement proposals into `storage/dream/`. Dream Mode is invocation-driven
+(`heimdal dream run`), offline, read-only against stable state, and never
+applies anything automatically.
+
+    heimdal dream run [--source failed|recent|eval|mixed] [--count N]
+    heimdal dream report [--id <dream_run_id>]
+    heimdal dream list
+
+Schemas: `dream_run`, `dream_report`, `improvement_proposal`.
+Storage: `storage/dream/{runs,reports,proposals,...}`.
+A synthetic baseline proposal is always written so every run leaves at least
+one artifact.
+
+### v0.4.1 — Patch promotion + eval review (commit `ceaef43`)
+
+The patch system grows from "validate JSON" into a real lifecycle:
+
+    experimental -> beta -> stable
+                 -> rejected
+                 -> archived
+
+    heimdal patch list [--channel <name>]
+    heimdal patch show <patch_id>
+    heimdal patch review <patch_id>
+    heimdal patch eval <patch_id>
+    heimdal patch promote <patch_id> --to beta|stable
+    heimdal patch reject <patch_id> --reason "..."
+
+Promotion to beta requires `intent`; promotion to stable requires a passing
+candidate eval (`patches/evals/<id>.eval.json`) **and** the must-pass eval
+suite green. Reviews and candidate evals are persisted alongside patches
+under `storage/patches/{reviews,evals}/`. Patch types expand with
+`eval_case_patch` (the only type currently allowed to auto-apply); all
+others stay review-only.
+
+### v0.4.2 — Skill Library 2.0
+
+Skills are now versioned JSON bundles under `storage/skills/<role>/<id>.json`
+with triggers, instructions, optional rubric/examples, and durable per-skill
+performance stats. Context OS uses a real registry-driven selector that:
+
+- ranks role-listed candidates first, then role-matched registry skills with
+  trigger overlap on the instruction;
+- caps the per-run count by hardware deployment mode
+  (3 / 5 / 5 / 7 for Dev / Single Device / Pipeline / Factory);
+- never injects an irrelevant skill even when there is budget room;
+- records `uses` / `passes` / `fails` / `last_used` per skill after each run.
+
+    heimdal skill list [--json]
+    heimdal skill show <skill_id>
+    heimdal skill search "<query>"
+    heimdal skill validate <skill_file>
+    heimdal skill install <skill_file>
+    heimdal skill archive <skill_id>
+    heimdal skill stats
+
+Seven seed skills ship under `examples/skills/<role>/`:
+`general.no_guess_answering`, `research.source_grounded_summary`,
+`research.truth_vault_qa`, `verifier.semantic_quality_check`,
+`ops.incident_summary`, `coding.bugfix_loop`,
+`business.pricing_policy_explanation`. First runtime boot copies them into
+`storage/skills/` (recursive seed walk, layout-preserving).
+
+Schema: `schemas/skill.schema.json`. The legacy SKILL_LIBRARY built-ins are
+kept as a fallback so v0.2.x role packs that name `concise_writing` /
+`structured_answer` still resolve.
+
+### Combined safety guarantees
+
+- Dream Mode never mutates stable state.
+- Patch promotion to stable is explicit, never automatic.
+- No Mirror Mode, MCP, REST server, vector DB, multi-GPU work in this block.
+
 ## v0.3.0 — Host Invocation File Bridge
 
 Heimdal exposes a local file bridge so external local agents can invoke it

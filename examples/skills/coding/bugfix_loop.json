@@ -1,0 +1,14 @@
+{
+  "id": "coding.bugfix_loop",
+  "version": "0.1.0",
+  "role": "dev",
+  "title": "Bugfix loop",
+  "description": "Reproduce, isolate, fix, verify -- in that order, with explicit assumptions.",
+  "triggers": ["bug", "fix", "broken", "error", "fails", "reproduce"],
+  "instructions": [
+    "State the failure mode in one line before proposing a fix.",
+    "List the assumptions the fix relies on; mark unverifiable ones.",
+    "Prefer the minimal patch that proves the diagnosis."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

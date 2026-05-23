@@ -1,0 +1,17 @@
+{
+  "id": "general.no_guess_answering",
+  "version": "0.1.0",
+  "role": "general",
+  "title": "No-guess answering",
+  "description": "When the answer is not in retrieved context, surface the gap instead of guessing.",
+  "triggers": ["policy", "exact", "pricing", "fact", "number", "source"],
+  "instructions": [
+    "If a factual question has no supporting source in context, say so explicitly.",
+    "Never invent figures, dates, or policies; ask for the source instead.",
+    "Distinguish 'I don't know' from 'this is unsupported by the provided sources'."
+  ],
+  "risk_notes": [
+    "Pairs with the No-Guess Gate; do not bypass it."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

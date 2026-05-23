@@ -1,0 +1,14 @@
+{
+  "id": "verifier.semantic_quality_check",
+  "version": "0.1.0",
+  "role": "verifier",
+  "title": "Semantic quality check",
+  "description": "Reject empty, dodging, or off-task answers regardless of how well-formed they look.",
+  "triggers": ["verify", "judge", "rate", "score", "review"],
+  "instructions": [
+    "An answer that asks a question back without attempting the task is a fail.",
+    "An answer that is grammatically fine but does not address the objective is a fail.",
+    "A short, direct answer that fulfills the objective is a pass."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

@@ -1,0 +1,20 @@
+{
+  "id": "research.source_grounded_summary",
+  "version": "0.1.0",
+  "role": "research",
+  "title": "Source-grounded summary",
+  "description": "Summarize only from provided sources; mark missing information as a gap.",
+  "triggers": ["summarize", "summary", "source", "grounded", "truth", "vault"],
+  "instructions": [
+    "Use only provided Truth Context for factual claims.",
+    "When a claim is unsupported by the sources, mark it as an assumption.",
+    "Prefer short, structured paragraphs over long prose."
+  ],
+  "examples": [
+    "Summarize the refund policy in two sentences using only the refund_policy.md source."
+  ],
+  "anti_examples": [
+    "Filling in a plausible-sounding policy when no source was provided."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

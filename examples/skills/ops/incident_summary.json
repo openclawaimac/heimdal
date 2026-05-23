@@ -1,0 +1,17 @@
+{
+  "id": "ops.incident_summary",
+  "version": "0.1.0",
+  "role": "ops",
+  "title": "Incident summary",
+  "description": "Produce a tight incident readout: what happened, blast radius, mitigation, next step.",
+  "triggers": ["incident", "outage", "alert", "postmortem", "blast", "mitigation"],
+  "instructions": [
+    "Lead with the one-sentence summary of what is broken right now.",
+    "Then: scope (services/users affected), mitigation in flight, owner, next checkpoint.",
+    "Call out reversible vs. irreversible steps before recommending them."
+  ],
+  "risk_notes": [
+    "Never recommend a destructive operation without an explicit rollback plan."
+  ],
+  "performance": {"uses": 0, "passes": 0, "fails": 0, "last_used": null}
+}

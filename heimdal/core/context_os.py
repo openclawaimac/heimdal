@@ -17,7 +17,7 @@ import os
 from heimdal import jsonschema_min
 from heimdal.ids import estimate_tokens, new_id, sha256_obj
 from heimdal.retrieval.truth_store import TruthStore
-from heimdal.skills.selector import SkillSelector
+from heimdal.skills.selector import SkillSelector, selector_for
 
 MAX_EXPERIENCE = 2
 
@@ -74,7 +74,7 @@ def build_packet(contract: dict, role: dict, envelope: dict, storage, config) ->
         {"ref": hit.ref, "text": hit.text, "score": hit.score} for hit in truth_hits
     ]
 
-    selector = SkillSelector(storage.path("skills"))
+    selector = selector_for(role, storage.path("skills"))
     skill_cards = selector.select(role.get("skills", []), instruction)
     skills_context = [
         {"skill_id": card.skill_id, "guidance": card.guidance} for card in skill_cards

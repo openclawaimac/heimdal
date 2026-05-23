@@ -1,8 +1,10 @@
-"""Skill Selector.
+"""Skill Selector -- Context OS's gate against skill dump.
 
-The Context Builder must inject only relevant skills, never all of them
-(docs/builder_pack/09_storage_context/ROLE_PACKS_AND_SKILLS.md). Skills come
-from a built-in library plus any user skills dropped into storage/skills.
+In v0.4.2 the heavy lifting moves to :class:`heimdal.skills.registry.SkillRegistry`;
+this module stays as the public selection surface Context OS calls. When a
+candidate skill id matches a Skill Library 2.0 entry on disk, that entry is
+used; otherwise the small built-in library below is consulted so v0.2.x role
+packs that name ``concise_writing`` / ``structured_answer`` still resolve.
 """
 
 from __future__ import annotations
@@ -11,6 +13,15 @@ import os
 import re
 from dataclasses import dataclass
 
+from heimdal.skills.registry import (
+    DEFAULT_MAX_SKILLS,
+    SkillRegistry,
+    max_skills_for,
+)
+
+# Legacy built-in skill library kept for backward compatibility with v0.2.x
+# role packs that name these IDs. New work should add JSON skills under
+# storage/skills/<role>/.
 SKILL_LIBRARY: dict[str, dict] = {
     "concise_writing": {
         "guidance": "Be concise. Lead with the answer. Cut filler.",
@@ -40,60 +51,91 @@ SKILL_LIBRARY: dict[str, dict] = {
     },
 }
 
-MAX_SKILLS = 3
+# Kept for v0.2.x callers that imported this constant directly.
+MAX_SKILLS = DEFAULT_MAX_SKILLS
 
 
 @dataclass
 class SkillCard:
+    """The trimmed view of a skill Context OS embeds in the Context Packet."""
+
     skill_id: str
     guidance: str
-    source: str  # "builtin" or "storage"
+    source: str  # "registry" or "builtin"
 
 
 def _keywords(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
 
 
 class SkillSelector:
-    def __init__(self, skills_dir: str | None = None):
-        self.skills_dir = skills_dir
+    """Pick at most ``max_skills`` relevant skills for one task.
 
-    def _storage_skills(self) -> dict[str, dict]:
-        skills: dict[str, dict] = {}
-        if not self.skills_dir or not os.path.isdir(self.skills_dir):
-            return skills
-        for name in sorted(os.listdir(self.skills_dir)):
-            if not name.lower().endswith((".md", ".txt")):
-                continue
-            path = os.path.join(self.skills_dir, name)
-            try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-                    content = fh.read().strip()
-            except OSError:
-                continue
-            skill_id = os.path.splitext(name)[0]
-            skills[skill_id] = {"guidance": content, "keywords": list(_keywords(content))}
-        return skills
+    ``skills_dir`` points at ``storage/skills``; when it exists, the Skill
+    Library 2.0 registry handles ranking. Role-listed candidate ids that
+    don't match any registry skill fall through to the built-in library so
+    v0.2.x role packs continue to work.
+    """
+
+    def __init__(
+        self,
+        skills_dir: str | None = None,
+        *,
+        max_skills: int = MAX_SKILLS,
+        role_id: str = "general",
+    ):
+        self.skills_dir = skills_dir
+        self.role_id = role_id
+        self.max_skills = max_skills
+        self._registry = (
+            SkillRegistry(skills_dir) if skills_dir and os.path.isdir(skills_dir) else None
+        )
 
     def select(self, candidate_ids: list[str], instruction: str) -> list[SkillCard]:
-        """Pick at most MAX_SKILLS skills relevant to the instruction."""
-        storage_skills = self._storage_skills()
+        """Score candidate ids + role-matched registry skills against the task."""
         instruction_kw = _keywords(instruction)
+        cards: list[SkillCard] = []
+        seen: set[str] = set()
 
-        scored: list[tuple[float, SkillCard]] = []
-        for index, skill_id in enumerate(candidate_ids):
-            if skill_id in storage_skills:
-                spec, source = storage_skills[skill_id], "storage"
-            elif skill_id in SKILL_LIBRARY:
-                spec, source = SKILL_LIBRARY[skill_id], "builtin"
-            else:
-                continue
-            overlap = len(instruction_kw & set(spec.get("keywords", [])))
-            # The first role skill is core and always retained; others ranked.
-            relevance = overlap + (1.0 if index == 0 else 0.0)
-            scored.append(
-                (relevance, SkillCard(skill_id, spec["guidance"], source))
+        # 1. Registry-first selection if a Skill Library 2.0 tree exists.
+        if self._registry is not None:
+            registry_skills = self._registry.select(
+                role_id=self.role_id,
+                candidate_ids=candidate_ids,
+                instruction=instruction,
+                max_skills=self.max_skills,
             )
+            for skill in registry_skills:
+                cards.append(SkillCard(skill.id, skill.guidance, "registry"))
+                seen.add(skill.id)
 
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [card for score, card in scored if score > 0][:MAX_SKILLS]
+        # 2. Fall back to the legacy built-in library for any role candidate
+        #    id that didn't resolve to a registry skill. Same scoring rule as
+        #    before: any positive overlap on the keyword hint qualifies.
+        if len(cards) < self.max_skills:
+            for index, skill_id in enumerate(candidate_ids):
+                if skill_id in seen:
+                    continue
+                spec = SKILL_LIBRARY.get(skill_id)
+                if spec is None:
+                    continue
+                overlap = len(instruction_kw & set(spec.get("keywords", [])))
+                relevance = overlap + (1.0 if index == 0 else 0.0)
+                if relevance <= 0:
+                    continue
+                cards.append(SkillCard(skill_id, spec["guidance"], "builtin"))
+                seen.add(skill_id)
+                if len(cards) >= self.max_skills:
+                    break
+
+        return cards[: self.max_skills]
+
+
+def selector_for(role: dict, skills_dir: str, hardware_profile: dict | None = None):
+    """Helper: build a SkillSelector calibrated to the role + deployment mode."""
+    deployment = (hardware_profile or {}).get("deployment_mode")
+    return SkillSelector(
+        skills_dir,
+        max_skills=max_skills_for(deployment),
+        role_id=role.get("role_id", "general"),
+    )
