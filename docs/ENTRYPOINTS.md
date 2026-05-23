@@ -64,16 +64,18 @@ the result to `<storage>/bridge/outbox/`. The bridge is transport-only --
 each job is routed to the existing Hermes / OpenClaw / generic handler; no
 Quality Factory logic lives here.
 
-    heimdal bridge init                           # create the bridge dirs
-    heimdal bridge once --backend offline         # process one batch and exit
-    heimdal bridge run  --backend ollama --model qwen2.5:7b --verifier hybrid
-    heimdal bridge status                         # show counts in each dir
+    heimdal bridge init                            # create the bridge dirs
+    heimdal bridge submit --input <job.json>       # write a job into the inbox
+    heimdal bridge once --backend offline          # process one batch and exit
+    heimdal bridge watch --backend ollama --model qwen2.5:7b --verifier hybrid
+    heimdal bridge status                          # show counts in each dir
 
-A job file (`examples/bridge/*.example.json`) selects an `adapter` (`hermes`,
-`openclaw`, or `generic`) and embeds the corresponding payload. Drop it into
-the inbox with the `.ready.json` suffix to mark it complete (or a plain
-`.json` that's been on disk for at least a second). The bridge moves the
-job through `inbox -> processing -> {archive | failed}` and writes one of:
+A job file (`examples/bridge/{heimdal,hermes,openclaw}_task.json`) selects an
+`adapter` (`hermes`, `openclaw`, or `heimdal`) and embeds the corresponding
+payload. Drop it into the inbox with the `.ready.json` suffix to mark it
+complete (or a plain `.json` that's been on disk for at least a second). The
+bridge moves the job through `inbox -> processing -> {archive | failed}`
+and writes one of:
 
 - `outbox/<job_id>.result.json` (success) -- carries the adapter result plus
   host-safe `trace_pack_ref` / `repro_pack_ref` and a `bridge` block.

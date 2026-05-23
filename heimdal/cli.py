@@ -14,7 +14,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal hermes run --input <hermes_payload.json>
     heimdal hermes capabilities [--json]
     heimdal hermes doctor --input <hermes_payload.json>
-    heimdal bridge init | once | run | status
+    heimdal bridge init | submit --input <job.json> | once | watch | status
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -491,7 +491,16 @@ def cmd_bridge(args) -> int:
             print(f"  {sub:<11}: {counts[sub]}")
         return 0
 
-    if command in ("once", "run"):
+    if command == "submit":
+        paths = bridge.resolve_paths(config, inbox=args.inbox, outbox=args.outbox)
+        if not args.input:
+            print("error: 'bridge submit' requires --input", file=sys.stderr)
+            return 2
+        target = bridge.submit_job(args.input, paths, config)
+        print(f"submitted: {os.path.relpath(target, config.storage_root)}")
+        return 0
+
+    if command in ("once", "run", "watch"):
         paths = bridge.resolve_paths(config, inbox=args.inbox, outbox=args.outbox)
         defaults = _bridge_defaults(args)
         max_jobs = args.max_jobs or bridge.DEFAULT_MAX_JOBS_PER_CYCLE
@@ -502,6 +511,7 @@ def cmd_bridge(args) -> int:
                 print(json.dumps(report, default=str))
             return 0
 
+        # 'watch' is the canonical name; 'run' is kept for v0.2.8 compatibility.
         cycles = bridge.run_loop(
             config, paths, defaults,
             poll_interval=args.poll_interval,
@@ -706,7 +716,11 @@ def build_parser() -> argparse.ArgumentParser:
         "bridge", help="local file bridge for external local agents"
     )
     p_bridge.add_argument(
-        "bridge_command", choices=["init", "once", "run", "status"]
+        "bridge_command",
+        choices=["init", "submit", "once", "watch", "run", "status"],
+    )
+    p_bridge.add_argument(
+        "--input", help="path to a bridge job JSON file (required for 'submit')"
     )
     p_bridge.add_argument(
         "--inbox", help="inbox directory (default: <storage>/bridge/inbox)"

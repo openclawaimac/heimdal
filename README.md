@@ -36,7 +36,9 @@ heimdal openclaw run --input task.json        # run an OpenClaw payload through 
 heimdal hermes run --input task.json          # run a Hermes payload through Heimdal
 heimdal hermes capabilities --json            # report host-integration capabilities
 heimdal bridge init                           # create the local file bridge dirs
+heimdal bridge submit --input examples/bridge/hermes_task.json
 heimdal bridge once --backend offline         # process inbox jobs and exit
+heimdal bridge watch --backend ollama --model qwen2.5:7b --verifier hybrid
 heimdal patch validate examples/patches/good.json
 heimdal truth list                            # list local Truth Vault sources
 heimdal truth add notes.md                    # add a .md/.txt file to the vault

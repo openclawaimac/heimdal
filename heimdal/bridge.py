@@ -35,7 +35,10 @@ DEFAULT_POLL_INTERVAL = 2.0
 DEFAULT_MAX_JOBS_PER_CYCLE = 16
 MIN_FILE_AGE_SECONDS = 1.0
 READY_SUFFIX = ".ready.json"
-SUPPORTED_ADAPTERS = ("hermes", "openclaw", "generic")
+# "heimdal" is the canonical name for the host-envelope-passthrough adapter;
+# "generic" is accepted as a one-cycle alias from v0.2.8.
+SUPPORTED_ADAPTERS = ("hermes", "openclaw", "heimdal")
+_HEIMDAL_ADAPTER_ALIASES = {"heimdal", "generic"}
 
 
 class BridgeError(Exception):
@@ -231,7 +234,7 @@ def _run_adapter(job: dict, runtime: Runtime) -> tuple[str, dict, str, str]:
             result.get("repro_pack_ref", ""),
             result.get("trace_pack_ref", ""),
         )
-    if adapter == "generic":
+    if adapter in _HEIMDAL_ADAPTER_ALIASES:
         raw = runtime.run_envelope(payload)
         sanitized = _sanitize_generic_result(raw, runtime.storage.root)
         return (
@@ -378,6 +381,28 @@ def _emit_failure(processing_path, paths, base, *, job_id, adapter, code,
 
 
 # -- cycle / loop ----------------------------------------------------------
+def submit_job(input_path: str, paths: dict, config: Config) -> str:
+    """Write an external job file into the inbox; return the target path.
+
+    Validates the job against the bridge job schema before writing so a bad
+    file is rejected at submit time rather than discovered in the next cycle.
+    The target name is derived from the job's ``job_id`` (sanitized) with the
+    ``.ready.json`` suffix; collisions get a UTC timestamp.
+    """
+    job = Storage.read_json(input_path)
+    jsonschema_min.validate_or_raise(
+        job, config.schema_path("bridge_job.schema.json"), "Bridge Job"
+    )
+    job_id = str(job.get("job_id", ""))
+    safe = _safe_basename(
+        job_id, fallback=os.path.basename(input_path).rsplit(".", 1)[0] or "job"
+    )
+    target = _unique_path(paths["inbox"], f"{safe}.ready.json")
+    with open(target, "w", encoding="utf-8") as fh:
+        json.dump(job, fh, indent=2, sort_keys=True, default=str)
+    return target
+
+
 def process_cycle(config: Config, paths: dict, defaults: dict, max_jobs: int) -> list[dict]:
     """Process at most ``max_jobs`` ready files from the inbox."""
     return [

@@ -1,7 +1,7 @@
 {
-  "job_id": "job-generic-001",
+  "job_id": "job-heimdal-001",
   "host": "internal",
-  "adapter": "generic",
+  "adapter": "heimdal",
   "payload": {
     "host": {
       "type": "cli",

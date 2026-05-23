@@ -32,21 +32,25 @@ def _drop(inbox: str, name: str, payload) -> str:
 
 
 def _hermes_job(job_id: str = "job-h1") -> dict:
-    return Storage.read_json(repo_path("examples/bridge/hermes_job.example.json")) | {
+    return Storage.read_json(repo_path("examples/bridge/hermes_task.json")) | {
         "job_id": job_id,
     }
 
 
 def _openclaw_job(job_id: str = "job-o1") -> dict:
-    payload = Storage.read_json(repo_path("examples/bridge/openclaw_job.example.json"))
+    payload = Storage.read_json(repo_path("examples/bridge/openclaw_task.json"))
     payload["job_id"] = job_id
     return payload
 
 
-def _generic_job(job_id: str = "job-g1") -> dict:
-    payload = Storage.read_json(repo_path("examples/bridge/generic_job.example.json"))
+def _heimdal_job(job_id: str = "job-g1") -> dict:
+    payload = Storage.read_json(repo_path("examples/bridge/heimdal_task.json"))
     payload["job_id"] = job_id
     return payload
+
+
+# Backwards-compat alias for older tests that referenced "_generic_job".
+_generic_job = _heimdal_job
 
 
 class BridgeInitTests(unittest.TestCase):
@@ -115,11 +119,20 @@ class BridgeProcessTests(unittest.TestCase):
             os.path.join(self.paths["outbox"], "job-o1.result.json")
         ))
 
-    def test_valid_generic_job_processes_successfully(self):
-        _drop(self.paths["inbox"], "job-g1.ready.json", _generic_job("job-g1"))
+    def test_valid_heimdal_job_processes_successfully(self):
+        _drop(self.paths["inbox"], "job-g1.ready.json", _heimdal_job("job-g1"))
         reports = self._process()
         self.assertEqual(reports[0]["status"], "pass")
-        self.assertEqual(reports[0]["adapter"], "generic")
+        self.assertEqual(reports[0]["adapter"], "heimdal")
+
+    def test_legacy_generic_adapter_name_still_dispatches(self):
+        # v0.2.8 jobs that named the adapter "generic" still work in v0.3.0;
+        # the bridge accepts it as a quiet alias for "heimdal".
+        job = _heimdal_job("job-g-legacy")
+        job["adapter"] = "generic"
+        _drop(self.paths["inbox"], "legacy.ready.json", job)
+        reports = self._process()
+        self.assertEqual(reports[0]["status"], "pass")
 
     def test_generic_result_has_no_absolute_paths(self):
         # The generic adapter hands a Host Task Envelope to the Runtime, whose
@@ -230,7 +243,7 @@ class BridgeCLITests(unittest.TestCase):
         main(["bridge", "init", "--manifest", self.manifest])
         inbox = os.path.join(self.tmp, "bridge", "inbox")
         shutil.copy(
-            repo_path("examples/bridge/hermes_job.example.json"),
+            repo_path("examples/bridge/hermes_task.json"),
             os.path.join(inbox, "job-cli.ready.json"),
         )
         buf = io.StringIO()
@@ -240,6 +253,57 @@ class BridgeCLITests(unittest.TestCase):
         outbox = os.listdir(os.path.join(self.tmp, "bridge", "outbox"))
         self.assertEqual(len(outbox), 1)
         self.assertTrue(outbox[0].endswith(".result.json"))
+
+    def test_bridge_submit_writes_job_to_inbox(self):
+        main(["bridge", "init", "--manifest", self.manifest])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(
+                [
+                    "bridge", "submit",
+                    "--input", repo_path("examples/bridge/hermes_task.json"),
+                    "--manifest", self.manifest,
+                ]
+            )
+        self.assertEqual(code, 0)
+        inbox = os.path.join(self.tmp, "bridge", "inbox")
+        # The submitted file is named from the job_id and has the .ready.json
+        # suffix so the next 'once' cycle picks it up immediately.
+        files = os.listdir(inbox)
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].endswith(".ready.json"))
+
+    def test_bridge_submit_then_once_round_trips(self):
+        main(["bridge", "init", "--manifest", self.manifest])
+        main(
+            [
+                "bridge", "submit",
+                "--input", repo_path("examples/bridge/heimdal_task.json"),
+                "--manifest", self.manifest,
+            ]
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["bridge", "once", "--offline", "--manifest", self.manifest])
+        self.assertEqual(code, 0)
+        outbox = os.listdir(os.path.join(self.tmp, "bridge", "outbox"))
+        self.assertEqual(len(outbox), 1)
+
+    def test_bridge_submit_requires_input(self):
+        main(["bridge", "init", "--manifest", self.manifest])
+        self.assertEqual(
+            main(["bridge", "submit", "--manifest", self.manifest]), 2
+        )
+
+    def test_bridge_watch_is_alias_for_run(self):
+        # 'watch' is the v0.3.0 canonical name for the poll loop. We can't
+        # easily exercise the loop end-to-end via the CLI (it blocks on
+        # SIGINT), but the choice must be accepted by argparse and dispatch
+        # to the same handler.
+        from heimdal.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["bridge", "watch", "--manifest", self.manifest])
+        self.assertEqual(args.bridge_command, "watch")
 
     def test_bridge_status_reports_counts(self):
         main(["bridge", "init", "--manifest", self.manifest])
