@@ -162,7 +162,9 @@ broker. An external agent only needs to write a file and read a file.
 
 ### Local real-Ollama validation
 
-On a machine with Ollama installed and `qwen2.5:7b` pulled:
+The shipped examples (`examples/bridge/{hermes,openclaw,heimdal}_task.json`)
+no longer pin a backend in their `runtime` block, so CLI flags act as the
+defaults. On a machine with Ollama installed and `qwen2.5:7b` pulled:
 
     heimdal bridge init
     heimdal bridge submit --input examples/bridge/hermes_task.json
@@ -175,6 +177,30 @@ Expected on success:
 - `result.metrics.backend` == `ollama`
 - `result.metrics.worker_model` == `qwen2.5:7b`
 - `result.metrics.verifier_backend` == `hybrid`
+- `result.metrics.semantic_verifier_model` == `qwen2.5:7b`
 - `repro_pack_ref` and `trace_pack_ref` present, relative
 - No absolute paths or internal artifacts (`context_packet`,
   `task_contract`) in the result
+
+To run the same examples offline (CI, smoke), pass `--offline` (or
+`--backend offline`) to `bridge once`; the examples carry no offline-pin
+of their own, so the CLI flag wins.
+
+### Manual testplan notes
+
+When dropping jobs into the inbox by hand for failure-path verification:
+
+- **Invalid JSON / unsupported adapter:** save the file as
+  `<name>.ready.json` so the readiness check fires immediately, or use a
+  plain `.json` filename and wait 1+ second before running `bridge once`
+  (the bridge only reads files older than `MIN_FILE_AGE_SECONDS = 1.0`).
+- **Unsupported-adapter test:** the job must still be a valid Bridge Job
+  Envelope -- a bare `{"adapter": "mystery"}` is rejected as
+  `JOB_SCHEMA_INVALID`, not `ADAPTER_UNSUPPORTED`. Use:
+
+      {
+        "job_id": "unsupported-001",
+        "host": "mystery_host",
+        "adapter": "mystery",
+        "payload": {}
+      }

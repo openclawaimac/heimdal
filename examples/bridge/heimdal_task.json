@@ -25,14 +25,10 @@
       },
       "priority": "P2",
       "budget": {
-        "quality_level": "B1"
+        "quality_level": "B2"
       },
       "expected_outputs": ["markdown_response"]
     },
     "runtime_hints": {}
-  },
-  "runtime": {
-    "backend": "offline",
-    "verifier": "rule_based"
   }
 }
