@@ -21,6 +21,7 @@ import time
 
 from heimdal import jsonschema_min
 from heimdal.adapters.hermes_host import handle as run_hermes
+from heimdal.adapters.host_support import host_safe_artifacts
 from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import Config
 from heimdal.core import status_codes
@@ -190,6 +191,26 @@ def _check_backend(config: Config, args: dict) -> None:
         )
 
 
+def _sanitize_generic_result(result: dict, storage_root: str) -> dict:
+    """Host-safe view of a raw Heimdal Result Envelope.
+
+    The generic adapter hands a Host Task Envelope straight to the Runtime,
+    so the returned envelope contains absolute artifact + pack paths. Before
+    the bridge writes this out for an external agent, drop internal-only
+    artifacts (Context Packet, Task Contract -- same policy Hermes/OpenClaw
+    enforce) and replace the pack ``path`` fields with relative ``ref`` so no
+    absolute filesystem layout leaks.
+    """
+    sanitized = dict(result)
+    sanitized["artifacts"] = host_safe_artifacts(result.get("artifacts", []))
+    for pack_key in ("repro_pack", "trace_pack"):
+        pack = result.get(pack_key) or {}
+        path = pack.get("path", "")
+        ref = os.path.relpath(path, storage_root) if path else ""
+        sanitized[pack_key] = {"id": pack.get("id", ""), "ref": ref}
+    return sanitized
+
+
 def _run_adapter(job: dict, runtime: Runtime) -> tuple[str, dict, str, str]:
     """Dispatch payload to the named adapter; return (status, result, repro, trace)."""
     adapter = job.get("adapter")
@@ -211,13 +232,14 @@ def _run_adapter(job: dict, runtime: Runtime) -> tuple[str, dict, str, str]:
             result.get("trace_pack_ref", ""),
         )
     if adapter == "generic":
-        result = runtime.run_envelope(payload)
-        root = runtime.storage.root
-        repro_path = (result.get("repro_pack") or {}).get("path", "")
-        trace_path = (result.get("trace_pack") or {}).get("path", "")
-        repro_ref = os.path.relpath(repro_path, root) if repro_path else ""
-        trace_ref = os.path.relpath(trace_path, root) if trace_path else ""
-        return result["status"], result, repro_ref, trace_ref
+        raw = runtime.run_envelope(payload)
+        sanitized = _sanitize_generic_result(raw, runtime.storage.root)
+        return (
+            sanitized["status"],
+            sanitized,
+            sanitized["repro_pack"]["ref"],
+            sanitized["trace_pack"]["ref"],
+        )
     raise BridgeError(
         status_codes.ADAPTER_UNSUPPORTED,
         f"Unsupported adapter: {adapter!r}",

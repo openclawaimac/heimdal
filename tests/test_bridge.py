@@ -121,6 +121,41 @@ class BridgeProcessTests(unittest.TestCase):
         self.assertEqual(reports[0]["status"], "pass")
         self.assertEqual(reports[0]["adapter"], "generic")
 
+    def test_generic_result_has_no_absolute_paths(self):
+        # The generic adapter hands a Host Task Envelope to the Runtime, whose
+        # internal envelope carries absolute paths; the bridge must sanitize
+        # those before writing the outbox file for an external agent.
+        _drop(self.paths["inbox"], "job-g2.ready.json", _generic_job("job-g2"))
+        self._process()
+        outbox_file = os.path.join(self.paths["outbox"], "job-g2.result.json")
+        wrapper = Storage.read_json(outbox_file)
+        # Whole outbox file: no absolute filesystem paths anywhere.
+        blob = json.dumps(wrapper)
+        self.assertNotIn(self.paths["root"], blob)
+        # Nested generic result: pack refs are relative, no .path keys.
+        gen = wrapper["result"]
+        for pack_key in ("repro_pack", "trace_pack"):
+            self.assertIn("ref", gen[pack_key])
+            self.assertFalse(os.path.isabs(gen[pack_key]["ref"]))
+            self.assertNotIn("path", gen[pack_key])
+        # Artifacts are host-safe {type, ref} entries without absolute paths.
+        for artifact in gen["artifacts"]:
+            self.assertIn("ref", artifact)
+            self.assertNotIn("path", artifact)
+            self.assertFalse(os.path.isabs(artifact["ref"]))
+
+    def test_generic_result_omits_internal_artifacts(self):
+        # Same internal-only policy Hermes/OpenClaw enforce: the host-visible
+        # generic result must not expose the Context Packet or Task Contract.
+        _drop(self.paths["inbox"], "job-g3.ready.json", _generic_job("job-g3"))
+        self._process()
+        wrapper = Storage.read_json(
+            os.path.join(self.paths["outbox"], "job-g3.result.json")
+        )
+        types = [a["type"] for a in wrapper["result"]["artifacts"]]
+        self.assertNotIn("context_packet", types)
+        self.assertNotIn("task_contract", types)
+
     def test_invalid_json_moves_to_failed_with_code(self):
         _drop(self.paths["inbox"], "bad.ready.json", "{not valid json")
         reports = self._process()
