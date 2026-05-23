@@ -44,6 +44,7 @@ from heimdal.config import load_config
 from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.dream import runner as dream_runner
+from heimdal.hardware import capability_matrix
 from heimdal.mirror import runner as mirror_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
@@ -66,39 +67,74 @@ def _prefer_backend(args) -> str | None:
 def cmd_doctor(args) -> int:
     config = load_config(args.manifest)
     storage = Storage(config.storage_root).ensure()
-    profile = full_profile(
+
+    # --profile-only short-circuits the capability tests; useful in CI / scripts.
+    run_tests = bool(
+        getattr(args, "capability_test", False)
+        or getattr(args, "benchmark_light", False)
+        or getattr(args, "all_models", False)
+        or args.model
+    )
+    if getattr(args, "no_capability_tests", False):
+        run_tests = False
+    if getattr(args, "profile_only", False):
+        run_tests = False
+
+    matrix = capability_matrix.build_matrix(
         config,
-        run_capability_tests=not args.no_capability_tests,
-        capability_model=args.model,
+        run_capability_tests=run_tests,
+        target_model=args.model,
+        all_models=bool(getattr(args, "all_models", False)),
     )
-    profile_path = storage.write_json(
-        f"logs/hardware_profiles/{now_compact()}.json", profile
+    matrix_path = storage.write_json(
+        f"logs/hardware_profiles/{now_compact()}.json", matrix
     )
-    profile["profile_path"] = profile_path
+    matrix["matrix_path"] = matrix_path
+    if getattr(args, "write_profile", False):
+        # Canonical "latest" copies under storage/runtime/.
+        capability_matrix.write_matrix(storage, matrix)
 
     if args.json:
-        print(json.dumps(profile, indent=2))
+        print(json.dumps(matrix, indent=2))
         return 0
 
-    os_info = profile["os"]
-    gpu = profile["gpu"]
-    ollama = profile["ollama"]
+    if getattr(args, "profile_only", False):
+        print(matrix["recommended_runtime_profile"])
+        return 0
+
+    plat = matrix["platform"]
+    hw = matrix["hardware"]
+    ollama = matrix["ollama"]
+    gpu = hw["gpu"]
     print(f"Heimdal doctor (v{__version__})")
-    print(f"  os            : {os_info['system']} / {os_info['flavour']} ({os_info['machine']})")
-    print(f"  cpu           : {profile['cpu']['logical_cores']} cores - {profile['cpu']['model']}")
-    print(f"  ram           : {profile['ram_gb']} GB")
-    print(f"  disk          : {profile['disk_class']}")
-    print(f"  gpu           : {gpu['count']} (cuda={gpu['cuda']}, metal={gpu['metal']})")
-    print(f"  deployment    : {profile['deployment_mode']}")
+    print(
+        f"  os            : {plat['system']} / {plat['flavour']} ({plat['machine']})"
+    )
+    print(f"  cpu           : {hw['cpu']['logical_cores']} cores - {hw['cpu']['model']}")
+    print(f"  ram           : {hw['ram']['total_gb']} GB")
+    print(f"  disk          : {hw['disk']['class']} ({hw['disk']['root']})")
+    print(
+        f"  gpu           : count={gpu['count']} cuda={gpu['cuda']} "
+        f"metal={gpu['metal']} rocm={gpu.get('rocm', False)}"
+    )
     print(f"  ollama        : {ollama['base_url']} reachable={ollama['reachable']}")
     if ollama["models"]:
         print(f"  ollama models : {', '.join(ollama['models'])}")
-    for test in profile["capability_tests"]:
-        status = "ok" if test["passed"] else "FAIL"
-        print(f"  capability    : {test['name']} on {test['model']} [{status}]")
-    for warning in profile["warnings"]:
+    for model, caps in matrix["model_capabilities"].items():
+        if caps.get("skipped"):
+            print(f"  capability    : {model} skipped ({caps.get('reason', '')})")
+            continue
+        worker = "ok " if caps.get("worker_candidate") else "no "
+        verif = "ok " if caps.get("semantic_verifier_candidate") else "no "
+        print(
+            f"  capability    : {model} basic={caps.get('basic_generation', '?')} "
+            f"json={caps.get('json_output', '?')} worker={worker.strip()} "
+            f"verifier={verif.strip()}"
+        )
+    print(f"  profile       : {matrix['recommended_runtime_profile']}")
+    for warning in matrix.get("warnings", []):
         print(f"  warning       : {warning}")
-    print(f"  profile       : {profile_path}")
+    print(f"  matrix        : {matrix_path}")
     return 0  # doctor always exits cleanly, even without Ollama
 
 
@@ -1075,18 +1111,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"heimdal {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_doctor = sub.add_parser("doctor", help="profile hardware and model backend")
+    p_doctor = sub.add_parser("doctor", help="profile hardware + build capability matrix")
     p_doctor.add_argument("--json", action="store_true", help="emit JSON")
     capability = p_doctor.add_mutually_exclusive_group()
     capability.add_argument(
-        "--capability-test",
-        action="store_true",
-        help="explicitly run model capability tests (the default)",
+        "--capability-test", action="store_true",
+        help="run model capability tests (default when --model or --all-models is set)",
     )
     capability.add_argument(
-        "--no-capability-tests", action="store_true", help="skip model capability tests"
+        "--no-capability-tests", action="store_true",
+        help="skip model capability tests",
     )
-    p_doctor.add_argument("--model", help="model to use for capability tests")
+    p_doctor.add_argument("--model", help="single model to capability-test")
+    p_doctor.add_argument(
+        "--all-models", action="store_true",
+        help="capability-test every installed Ollama generative model",
+    )
+    p_doctor.add_argument(
+        "--benchmark-light", action="store_true",
+        help="alias for --capability-test; emphasises cheap smoke tests",
+    )
+    p_doctor.add_argument(
+        "--profile", dest="profile_only", action="store_true",
+        help="print only the recommended runtime profile name",
+    )
+    p_doctor.add_argument(
+        "--write-profile", action="store_true",
+        help="also write the matrix to storage/runtime/capability_matrix.json",
+    )
     p_doctor.add_argument("--manifest", help="path to the Heimdal manifest")
     p_doctor.set_defaults(func=cmd_doctor)
 

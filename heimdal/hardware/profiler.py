@@ -96,7 +96,7 @@ def detect_disk_class(path: str) -> str:
 
 
 def detect_gpus() -> dict:
-    result = {"count": 0, "cuda": False, "metal": False, "devices": []}
+    result = {"count": 0, "cuda": False, "metal": False, "rocm": False, "devices": []}
     if platform.system() == "Darwin" and platform.machine() == "arm64":
         result["metal"] = True
     smi = shutil.which("nvidia-smi")
@@ -112,13 +112,48 @@ def detect_gpus() -> dict:
                 for line in out.stdout.strip().splitlines():
                     name, _, mem = line.partition(",")
                     result["devices"].append(
-                        {"name": name.strip(), "vram_mb": _safe_int(mem)}
+                        {"kind": "cuda", "name": name.strip(), "vram_mb": _safe_int(mem)}
                     )
                 result["count"] = len(result["devices"])
                 result["cuda"] = result["count"] > 0
         except (subprocess.SubprocessError, OSError):
             pass
+    # Best-effort ROCm detection: rocm-smi shipped with ROCm prints GPU info.
+    if not result["devices"] and shutil.which("rocm-smi"):
+        try:
+            out = subprocess.run(
+                ["rocm-smi", "--showproductname"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0 and "GPU" in out.stdout:
+                result["rocm"] = True
+                # Without a parse-friendly format we just count "GPU[" markers.
+                count = out.stdout.count("GPU[")
+                result["count"] = count or 1
+                result["devices"].append({"kind": "rocm", "name": "rocm-gpu",
+                                          "vram_mb": 0})
+        except (subprocess.SubprocessError, OSError):
+            pass
     return result
+
+
+def total_vram_gb(gpus: dict) -> float:
+    total_mb = sum(int(d.get("vram_mb", 0) or 0) for d in gpus.get("devices", []))
+    return round(total_mb / 1024.0, 1)
+
+
+def wsl2_storage_warnings(storage_root: str) -> list[str]:
+    """Flag a storage_root pinned to a Windows drive under WSL2 -- slow I/O."""
+    warnings: list[str] = []
+    if is_wsl2():
+        normalized = os.path.normpath(os.path.abspath(storage_root))
+        for drive in ("/mnt/c", "/mnt/d", "/mnt/e", "/mnt/f"):
+            if normalized.startswith(drive + os.sep) or normalized == drive:
+                warnings.append(
+                    f"storage_root is under {drive} on WSL2; move it under the "
+                    "Linux filesystem (~/) for usable disk performance."
+                )
+    return warnings
 
 
 def _safe_int(text: str) -> int:
