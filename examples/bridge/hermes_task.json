@@ -16,7 +16,7 @@
         "max_words": 120
       },
       "budget": {
-        "quality_level": "B1"
+        "quality_level": "B2"
       },
       "output_profiles": ["markdown"],
       "expected_outputs": ["markdown_response"]
@@ -26,9 +26,5 @@
       "risk_mode": "balanced"
     },
     "callback": {}
-  },
-  "runtime": {
-    "backend": "offline",
-    "verifier": "rule_based"
   }
 }
