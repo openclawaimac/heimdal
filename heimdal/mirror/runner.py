@@ -28,7 +28,7 @@ import os
 from heimdal import __version__, jsonschema_min
 from heimdal.config import Config, load_config
 from heimdal.ids import new_id, now_iso
-from heimdal.mirror import redaction, selector
+from heimdal.mirror import diff_engine, proposal_builder, redaction, selector
 from heimdal.mirror.manual_teacher import ManualTeacher
 from heimdal.mirror.provider import TeacherInput, TeacherProvider, TeacherResult
 from heimdal.mirror.stub_teacher import HallucinatingStub, StubTeacher
@@ -191,6 +191,8 @@ def run_mirror(
     teacher_calls: list[dict] = []
     usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost": 0.0}
 
+    diffs: list[dict] = []
+    proposals: list[dict] = []
     for index, case in enumerate(cases):
         if usage["calls"] >= max_calls:
             teacher_calls.append({
@@ -236,6 +238,26 @@ def run_mirror(
             usage["calls"] += 1
             usage["input_tokens"] += int(result.usage.get("input_tokens", 0) or 0)
             usage["output_tokens"] += int(result.usage.get("output_tokens", 0) or 0)
+            # v0.5.1: per-case diff + proposal generation. Deterministic
+            # heuristic scoring -- no extra model call -- so adding it here
+            # keeps `mirror run` a single command for the operator.
+            diff = diff_engine.compare(
+                case_id=case["case_id"],
+                local_output=case["local_output"],
+                teacher_output=result.output,
+                task=case["task"],
+                truth_refs=case.get("truth_refs"),
+                mirror_run_id=mirror_run_id,
+            )
+            storage.write_json(
+                f"mirror/diffs/{diff['diff_id']}.json", diff,
+            )
+            diffs.append(diff)
+            for proposal in proposal_builder.build_proposals(diff, case=case):
+                storage.write_json(
+                    f"mirror/proposals/{proposal['id']}.json", proposal,
+                )
+                proposals.append(proposal)
 
     summary = _summary(cases, teacher_calls, source, provider_name, dry_run)
     run = {
@@ -254,8 +276,8 @@ def run_mirror(
             for c in cases
         ],
         "teacher_calls": teacher_calls,
-        "diffs": [],
-        "proposals": [],
+        "diffs": diffs,
+        "proposals": proposals,
         "usage": usage,
         "blocked_reason": None,
         "summary": summary,

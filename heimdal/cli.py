@@ -585,6 +585,63 @@ def cmd_mirror(args) -> int:
                 )
         return 0
 
+    if command in ("diff", "proposals"):
+        try:
+            report = mirror_runner.load_mirror_report(config, args.id or "latest")
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        payload = report["diffs"] if command == "diff" else report["proposals"]
+        if args.json:
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            if not payload:
+                print(f"No {command} for mirror_run_id {report['mirror_run_id']}.")
+                return 0
+            for item in payload:
+                if command == "diff":
+                    print(
+                        f"  diff: {item['diff_id']}  case={item['case_id']}  "
+                        f"teacher_better={item['teacher_better']}  "
+                        f"local_better={item['local_better']}"
+                    )
+                else:
+                    print(
+                        f"  proposal: {item['id']}  kind={item['kind']}  "
+                        f"risk={item['risk_level']}  intent={item['intent'][:60]}"
+                    )
+        return 0
+
+    if command == "promote-proposal":
+        if not args.id:
+            print("error: 'mirror promote-proposal' requires --id <proposal_id>",
+                  file=sys.stderr)
+            return 2
+        proposals_dir = Storage(config.storage_root).ensure().path("mirror/proposals")
+        target_path = os.path.join(proposals_dir, f"{args.id}.json")
+        if not os.path.exists(target_path):
+            print(f"error: proposal not found: {args.id}", file=sys.stderr)
+            return 2
+        proposal = Storage.read_json(target_path)
+        if proposal.get("kind") != "patch_proposal":
+            print(
+                f"error: only patch_proposal can be promoted via this command "
+                f"(got {proposal.get('kind')!r}); skill / eval_case proposals "
+                "are installed via their respective tooling.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            patch_manager.install_patch(config, proposal["patch"])
+        except (patch_manager.PatchError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"promoted: {proposal['patch']['id']} -> experimental "
+            f"(via mirror proposal {proposal['id']})"
+        )
+        return 0
+
     if command in ("report", "show"):
         try:
             report = mirror_runner.load_mirror_report(config, args.id)
@@ -1124,7 +1181,9 @@ def build_parser() -> argparse.ArgumentParser:
         "mirror", help="Mirror Mode: optional cloud-teacher comparison"
     )
     p_mirror.add_argument(
-        "mirror_command", choices=["run", "list", "report", "show"]
+        "mirror_command",
+        choices=["run", "list", "report", "show", "diff", "proposals",
+                 "promote-proposal"],
     )
     p_mirror.add_argument(
         "--source", choices=list(mirror_runner.SOURCES),

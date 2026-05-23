@@ -1,5 +1,79 @@
 # Changelog
 
+## v0.5.0 — v0.5.1 — Teacher Comparison Core
+
+Two coordinated releases that let Heimdal compare local outputs to an
+optional cloud/frontier teacher and propose improvements -- without ever
+making cloud calls a runtime dependency.
+
+### v0.5.0 — Mirror Mode (commit `3ca446e`)
+
+`heimdal mirror run` selects recent cases (recent / failed / eval / dream
+/ mixed), forwards them to a teacher provider, and writes the run +
+report under `storage/mirror/`. Mirror Mode is OFF by default and walks
+four safety gates before any cloud call:
+
+1. `mirror.enabled=true` in the manifest (or `--teacher stub/manual`, or
+   `--dry-run`).
+2. `privacy_mode=local_only` blocks every non-stub/non-manual provider.
+3. `max_teacher_calls_per_run` caps the call count.
+4. `redact_before_send` strips API keys, env-style secret assignments,
+   private-key blocks, bearer headers, AWS keys, GitHub/Slack tokens,
+   and `.ssh` paths -- each redaction is logged as `{kind, length}` for
+   audit.
+
+Providers: deterministic `StubTeacher` (default; CI path),
+`HallucinatingStub` (diff-engine test fixture), `ManualTeacher` (reads
+hand-written teacher answers from `storage/mirror/teacher_outputs/`),
+lazy-imported `OpenAITeacher` / `AnthropicTeacher` (opt-in via env vars,
+never required in CI).
+
+CLI: `heimdal mirror {run, list, report, show}` with `--dry-run`,
+`--teacher`, `--teacher-model`, `--privacy`, `--max-teacher-calls`,
+`--source`, `--limit`. New schemas `mirror_run`, `mirror_diff`. Storage:
+`storage/mirror/{runs,reports,comparisons,teacher_outputs,
+redacted_inputs,diffs,proposals,logs}/`.
+
+### v0.5.1 — Frontier Diff Engine
+
+After every successful teacher call, `mirror run` now scores both local
+and teacher outputs across 14 documented dimensions (task_adherence,
+factuality, source_grounding, completeness, reasoning_depth,
+actionability, structure_format, conciseness, uncertainty_handling,
+hallucination_risk, missing_caveats, tool_or_source_use,
+no_guess_behavior, semantic_quality) and writes a Mirror Diff plus any
+proposals into `storage/mirror/{diffs,proposals}/`.
+
+The diff engine does NOT assume the teacher is correct. A teacher that
+invents specific claims without source refs trips `teacher_hallucinated`
+and is disqualified from "teacher_better" regardless of its other wins.
+A local No-Guess answer beats a hallucinating teacher.
+
+Proposal builder maps findings to existing proposal kinds:
+`patch_proposal` (rubric / prompt patches for task_adherence /
+factuality / source_grounding / missing_caveats / no_guess_behavior),
+`skill_proposal` (structure_format / completeness / reasoning_depth /
+actionability / conciseness / uncertainty_handling), and
+`eval_case_proposal` (source-required regression). Each emitted patch
+carries `intent`, `rollback` review-only marker, `risk_level`, and
+`created_by: mirror_mode` so `heimdal patch review/eval/promote --to
+beta` works on it without manual cleanup.
+
+CLI additions:
+
+    heimdal mirror diff [--id <mirror_run_id>|latest]
+    heimdal mirror proposals [--id <mirror_run_id>|latest]
+    heimdal mirror promote-proposal --id <proposal_id>
+
+### Combined safety guarantees
+
+- Mirror Mode never mutates stable state -- only proposals.
+- Cloud providers are opt-in; CI never sees them.
+- Token / call budgets are enforced before any provider call.
+- Redaction runs unconditionally when `redact_before_send=true`.
+- The teacher is advisory, not authoritative; hallucination flips the
+  verdict.
+
 ## v0.4.0 — v0.4.2 — Self-Improvement Core
 
 Three coordinated releases that turn Heimdal from a runtime into a system that
