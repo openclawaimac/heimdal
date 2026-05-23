@@ -229,17 +229,40 @@ def eval_patch(config, patch: dict, runtime) -> dict:
         regressions.append("eval runner flagged a regression.")
 
     if regressions:
-        recommendation = "reject"
-        reason = "; ".join(regressions)
+        eval_recommendation = "reject"
+        eval_reason = "; ".join(regressions)
     elif candidate.get("must_pass_all_passed") and improvements:
-        recommendation = "promote"
-        reason = "Candidate improved over baseline with must-pass green."
+        eval_recommendation = "promote"
+        eval_reason = "Candidate improved over baseline with must-pass green."
     elif candidate.get("must_pass_all_passed"):
-        recommendation = "promote"
-        reason = "Candidate met all promotion gates."
+        eval_recommendation = "promote"
+        eval_reason = "Candidate met all promotion gates."
     else:
-        recommendation = "needs_review"
-        reason = "Candidate did not regress but did not clearly improve."
+        eval_recommendation = "needs_review"
+        eval_reason = "Candidate did not regress but did not clearly improve."
+
+    # Lifecycle gate: a patch with review blockers (missing intent / rollback
+    # / unknown type / missing 'change') cannot be promoted even if the eval
+    # is clean. The combined final recommendation honours both signals.
+    review = review_patch(patch)
+    blocking_issues = list(review.get("issues", []))
+    if blocking_issues:
+        lifecycle_recommendation = "needs_review"
+    else:
+        lifecycle_recommendation = "promote"
+
+    if eval_recommendation == "reject":
+        final_recommendation = "reject"
+        final_reason = eval_reason
+    elif lifecycle_recommendation == "needs_review":
+        final_recommendation = "needs_review"
+        final_reason = "Review blockers must be resolved: " + "; ".join(blocking_issues)
+    elif eval_recommendation == "needs_review":
+        final_recommendation = "needs_review"
+        final_reason = eval_reason
+    else:
+        final_recommendation = "promote"
+        final_reason = eval_reason
 
     report = {
         "patch_id": patch["id"],
@@ -257,8 +280,11 @@ def eval_patch(config, patch: dict, runtime) -> dict:
         },
         "regressions": regressions,
         "improvements": improvements,
-        "recommendation": recommendation,
-        "reason": reason,
+        "eval_recommendation": eval_recommendation,
+        "lifecycle_recommendation": lifecycle_recommendation,
+        "blocking_issues": blocking_issues,
+        "recommendation": final_recommendation,
+        "reason": final_reason,
         "evaluated_at": now_iso(),
     }
     _ensure_storage(config).write_json(
@@ -356,9 +382,15 @@ def promote_patch(config, patch_id: str, to_channel: str,
                     "Stable promotion requires a candidate eval; "
                     "run `heimdal patch eval <patch_id>` first."
                 )
-            if patch_eval["recommendation"] == "reject":
+            # The candidate eval must explicitly recommend promotion. A
+            # needs_review recommendation (e.g. patch has lifecycle blockers
+            # like missing intent / rollback) is not enough -- fix the patch
+            # and re-run eval before promoting.
+            if patch_eval["recommendation"] != "promote":
                 raise PatchError(
-                    f"Candidate eval recommends reject: {patch_eval['reason']}"
+                    f"Candidate eval recommendation is "
+                    f"{patch_eval['recommendation']!r}, not 'promote': "
+                    f"{patch_eval['reason']}"
                 )
             # Synthesize the legacy gate input from the candidate-eval dict.
             eval_summary = {

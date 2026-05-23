@@ -12,6 +12,7 @@ import os
 
 from heimdal import __version__, jsonschema_min
 from heimdal.config import Config, load_config
+from heimdal.core import patch_manager
 from heimdal.dream import analysis, proposer
 from heimdal.ids import new_id, now_iso
 from heimdal.storage import Storage
@@ -26,12 +27,31 @@ def _ensure_storage(config: Config) -> Storage:
 
 
 def _write_proposal(storage: Storage, proposal: dict, config: Config) -> str:
+    """Write a proposal to disk and, for patch proposals, install the inner
+    patch into the experimental lifecycle so ``heimdal patch list`` can see it.
+
+    Patch installation is best-effort: if the embedded patch fails schema
+    validation, the proposal file is still written so Dream Mode's audit
+    trail stays intact and the operator can fix the inner patch by hand.
+    """
     jsonschema_min.validate_or_raise(
         proposal,
         config.schema_path("improvement_proposal.schema.json"),
         "Improvement Proposal",
     )
-    return storage.write_json(f"dream/proposals/{proposal['id']}.json", proposal)
+    proposal_path = storage.write_json(
+        f"dream/proposals/{proposal['id']}.json", proposal
+    )
+    if proposal.get("kind") == "patch_proposal":
+        patch = proposal.get("patch")
+        if isinstance(patch, dict):
+            try:
+                patch_manager.install_patch(config, patch)
+            except (patch_manager.PatchError, ValueError):
+                # Keep the audit-trail proposal even if the inner patch is
+                # malformed; surface via the report's recommended_actions.
+                pass
+    return proposal_path
 
 
 def _summary(patterns: list[dict], proposals: list[dict], source: str,

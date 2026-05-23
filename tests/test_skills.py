@@ -226,6 +226,158 @@ class ContextOSSkillIntegrationTests(unittest.TestCase):
         self.assertTrue(any_with_uses, "expected at least one skill's stats bumped")
 
 
+class SkillBootstrapTests(unittest.TestCase):
+    """v0.4.2 fix #4: explicit seed installation; skill CLI no longer needs a
+    Runtime to be booted first."""
+
+    def test_bootstrap_into_fresh_storage_installs_seven_seed_skills(self):
+        config = temp_config(tempfile.mkdtemp())
+        Storage(config.storage_root).ensure()
+        # No Runtime constructed; nothing in storage/skills yet.
+        installed = skill_registry.bootstrap_seed_skills(config)
+        self.assertEqual(len(installed), 7)
+        registry = SkillRegistry(os.path.join(config.storage_root, "skills"))
+        ids = {s.id for s in registry.load()}
+        self.assertIn("research.source_grounded_summary", ids)
+        # Re-bootstrap is a no-op (does not overwrite).
+        self.assertEqual(skill_registry.bootstrap_seed_skills(config), [])
+
+    def test_bootstrap_cli_command_emits_installed_list(self):
+        tmp = tempfile.mkdtemp()
+        manifest = write_temp_manifest(tmp, tmp)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["skill", "bootstrap", "--json", "--manifest", manifest])
+        self.assertEqual(code, 0)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(len(report["installed"]), 7)
+
+    def test_skill_list_on_empty_storage_hints_at_bootstrap(self):
+        tmp = tempfile.mkdtemp()
+        manifest = write_temp_manifest(tmp, tmp)
+        Storage(tmp).ensure()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(
+                main(["skill", "list", "--manifest", manifest]), 0
+            )
+        self.assertIn("heimdal skill bootstrap", buf.getvalue())
+
+
+class TraceAndReproSkillRefsTests(unittest.TestCase):
+    """v0.4.2 fix #5: selected skills must surface in trace + repro."""
+
+    def test_trace_records_skill_selection_event(self):
+        config = temp_config(tempfile.mkdtemp())
+        runtime = Runtime(config, prefer_backend="offline")
+        envelope = {
+            "host": {"type": "cli", "host_task_id": "skill-trace-1",
+                     "source_agent": None, "callback": {}},
+            "role_binding": {
+                "role_id": "research", "risk_mode": "balanced",
+                "privacy_mode": "local_only", "output_profiles": ["markdown"],
+            },
+            "task_request": {
+                "task_id": "skill-trace-1", "title": "Sum",
+                "instruction": "Using local sources, summarize Heimdal modes.",
+                "inputs": {}, "constraints": {},
+                "priority": "P2", "budget": {"quality_level": "B2"},
+                "expected_outputs": ["markdown_response"],
+            },
+            "runtime_hints": {},
+        }
+        result = runtime.run_envelope(envelope)
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        selection_event = next(
+            (e for e in trace["events"] if e["name"] == "skill_selection"),
+            None,
+        )
+        self.assertIsNotNone(selection_event, "expected a skill_selection event")
+        self.assertTrue(selection_event["data"]["selected_skills"])
+        # Refs include skill_id + source + role -- no full guidance text.
+        first = selection_event["data"]["selected_skills"][0]
+        for key in ("skill_id", "source", "role"):
+            self.assertIn(key, first)
+        self.assertNotIn("guidance", first)
+
+    def test_repro_pack_records_selected_skills(self):
+        config = temp_config(tempfile.mkdtemp())
+        runtime = Runtime(config, prefer_backend="offline")
+        result = runtime.run_envelope({
+            "host": {"type": "cli", "host_task_id": "skill-repro-1",
+                     "source_agent": None, "callback": {}},
+            "role_binding": {
+                "role_id": "research", "risk_mode": "balanced",
+                "privacy_mode": "local_only", "output_profiles": ["markdown"],
+            },
+            "task_request": {
+                "task_id": "skill-repro-1", "title": "Sum",
+                "instruction": "Using local sources, summarize Heimdal modes.",
+                "inputs": {}, "constraints": {},
+                "priority": "P2", "budget": {"quality_level": "B2"},
+                "expected_outputs": ["markdown_response"],
+            },
+            "runtime_hints": {},
+        })
+        repro = Storage.read_json(result["repro_pack"]["path"])
+        self.assertIn("selected_skills", repro)
+        self.assertTrue(repro["selected_skills"])
+        for entry in repro["selected_skills"]:
+            self.assertIn("skill_id", entry)
+
+
+class RoleAwareSelectionTests(unittest.TestCase):
+    """v0.4.2 fix #6: --role on CLI; selector pulls cross-role skills on
+    strong trigger overlap."""
+
+    def test_cli_run_with_role_flag_picks_research_skills(self):
+        tmp = tempfile.mkdtemp()
+        manifest = write_temp_manifest(tmp, tmp)
+        # Seed skills explicitly via bootstrap; the run CLI then exercises
+        # the registry-driven selector through the full envelope flow.
+        main(["skill", "bootstrap", "--manifest", manifest])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main([
+                "run",
+                "--instruction",
+                "Using only the local Truth Vault, produce a short "
+                "source-grounded summary of Heimdal.",
+                "--role", "research",
+                "--offline", "--json", "--manifest", manifest,
+            ])
+        self.assertEqual(code, 0)
+        result = json.loads(buf.getvalue())
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        selection_event = next(
+            e for e in trace["events"] if e["name"] == "skill_selection"
+        )
+        ids = [s["skill_id"] for s in selection_event["data"]["selected_skills"]]
+        self.assertTrue(any("research" in i for i in ids),
+                        f"expected a research skill, got {ids}")
+
+    def test_strong_cross_role_trigger_overlap_picks_skill_from_other_role(self):
+        config = temp_config(tempfile.mkdtemp())
+        storage = Storage(config.storage_root).ensure()
+        # Install a research-only skill with very specific triggers.
+        _install(storage, _skill(
+            "research.policy_pull",
+            "research",
+            triggers=["policy", "source", "grounded", "documented"],
+            instructions=["Anchor every claim in the cited source."],
+        ))
+        registry = SkillRegistry(storage.path("skills"))
+        # A general-role task whose instruction fires the research skill hard.
+        picked = registry.select(
+            role_id="general",
+            candidate_ids=[],
+            instruction="Explain the documented refund policy from the source.",
+            max_skills=5,
+        )
+        ids = [s.id for s in picked]
+        self.assertIn("research.policy_pull", ids)
+
+
 class SkillCLITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

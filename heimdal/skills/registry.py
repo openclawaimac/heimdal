@@ -16,10 +16,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 
 from heimdal import jsonschema_min
-from heimdal.ids import now_iso
+from heimdal.ids import now_iso, repo_root
 
 # Per-run skill caps by deployment mode (hardware profile).
 MAX_SKILLS_BY_DEPLOYMENT = {
@@ -34,6 +35,12 @@ DEFAULT_MAX_SKILLS = 5
 # Performance "neutral" baseline for skills with no history yet -- mid-range
 # so they aren't penalized vs. an unproven one in the first round.
 _NEUTRAL_PASS_RATE = 0.5
+
+# Minimum trigger-overlap a cross-role skill must have to qualify for
+# selection on a task bound to a different role. The threshold has to be
+# high enough that a skill is unambiguously topical -- a single shared
+# keyword is not enough.
+STRONG_CROSS_ROLE_OVERLAP = 2
 
 _STATS_FILE = "_stats.json"
 
@@ -204,6 +211,25 @@ class SkillRegistry:
             scored.append((score, 0, skill))
             seen.add(skill.id)
 
+        # 3. Strong cross-role overlap: a skill in a different role can still
+        #    qualify if its triggers fire hard on the instruction. The bar is
+        #    higher (>= STRONG_CROSS_ROLE_OVERLAP distinct terms) so a
+        #    research skill only gets pulled into a general task when the
+        #    instruction is clearly about its topic.
+        for skill in loaded.values():
+            if skill.id in seen or skill.role == role_id:
+                continue
+            trigger_overlap = len(
+                instruction_tokens & _tokens(" ".join(skill.triggers))
+            )
+            if trigger_overlap < STRONG_CROSS_ROLE_OVERLAP:
+                continue
+            # No role-match boost here -- the cross-role skill rides on
+            # trigger strength alone, and is ranked below same-role peers.
+            score = trigger_overlap + (skill.pass_rate - _NEUTRAL_PASS_RATE)
+            scored.append((score, -1, skill))
+            seen.add(skill.id)
+
         scored.sort(key=lambda triple: (triple[0], triple[1]), reverse=True)
         return [skill for score, _, skill in scored if score > 0][:max_skills]
 
@@ -275,6 +301,47 @@ def install_skill_file(config, source_path: str) -> str:
     with open(dest, "w", encoding="utf-8") as fh:
         json.dump(skill, fh, indent=2, sort_keys=True)
     return dest
+
+
+def bundled_seed_skills_root() -> str:
+    """The on-disk location of the bundled v0.4.2 seed skills."""
+    return os.path.join(repo_root(), "examples", "skills")
+
+
+def bootstrap_seed_skills(config, *, overwrite: bool = False) -> list[str]:
+    """Copy bundled examples/skills/<role>/*.json into storage/skills/<role>/.
+
+    Returns the list of skill ids actually written. Existing files are kept
+    unless ``overwrite=True``. The previous boot-time seeder only ran from
+    ``Runtime.__init__`` -- ``heimdal skill *`` commands never construct a
+    Runtime, so a fresh storage tree had an empty skill registry. This
+    function is what ``heimdal skill bootstrap`` calls explicitly.
+    """
+    src_root = bundled_seed_skills_root()
+    if not os.path.isdir(src_root):
+        return []
+    dst_root = os.path.join(config.storage_root, "skills")
+    os.makedirs(dst_root, exist_ok=True)
+    installed: list[str] = []
+    for root, _dirs, files in os.walk(src_root):
+        rel = os.path.relpath(root, src_root)
+        dst_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
+        os.makedirs(dst_dir, exist_ok=True)
+        for name in sorted(files):
+            if not name.endswith(".json"):
+                continue
+            src_path = os.path.join(root, name)
+            dst_path = os.path.join(dst_dir, name)
+            if os.path.exists(dst_path) and not overwrite:
+                continue
+            shutil.copy2(src_path, dst_path)
+            try:
+                with open(src_path, "r", encoding="utf-8") as fh:
+                    skill = json.load(fh)
+                installed.append(str(skill.get("id", name)))
+            except (OSError, ValueError):
+                installed.append(name)
+    return installed
 
 
 def archive_skill(config, skill_id: str) -> str | None:

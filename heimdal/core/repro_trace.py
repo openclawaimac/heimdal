@@ -46,6 +46,7 @@ def build_repro_pack(
     hashes: dict,
     hardware_profile: dict | None = None,
     retrieval_refs: list | None = None,
+    selected_skills: list | None = None,
 ) -> dict:
     return {
         "id": new_id("repro"),
@@ -60,6 +61,7 @@ def build_repro_pack(
         },
         "hardware_profile": hardware_profile or {},
         "retrieval_refs": retrieval_refs or [],
+        "selected_skills": selected_skills or [],
     }
 
 

@@ -14,12 +14,19 @@ from heimdal.ids import new_id
 class CLIAdapter(HostAdapter):
     host_type = "cli"
 
-    def to_host_task_envelope(self, raw_input) -> dict:
+    def to_host_task_envelope(self, raw_input, *, role: str | None = None) -> dict:
+        """Build a Host Task Envelope from a CLI input.
+
+        ``role`` (when given alongside an instruction string) sets the role
+        binding's ``role_id``, so ``heimdal run --instruction "..." --role
+        research`` reaches the research role pack and its skill candidates.
+        """
         if isinstance(raw_input, dict) and "host" in raw_input and "task_request" in raw_input:
             return raw_input  # already a Host Task Envelope
 
         if isinstance(raw_input, str):
             task_id = new_id("task")
+            role_id = role or "general"
             return {
                 "host": {
                     "type": "cli",
@@ -28,7 +35,7 @@ class CLIAdapter(HostAdapter):
                     "callback": {},
                 },
                 "role_binding": {
-                    "role_id": "general",
+                    "role_id": role_id,
                     "risk_mode": "balanced",
                     "privacy_mode": "local_only",
                     "output_profiles": ["markdown"],

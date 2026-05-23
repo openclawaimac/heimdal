@@ -165,6 +165,10 @@ class Runtime:
             },
             hardware_profile=self.hardware_profile,
             retrieval_refs=context_os.retrieval_refs(outcome["packet"]),
+            selected_skills=[
+                {"skill_id": s["skill_id"], "source": s.get("source", "registry")}
+                for s in outcome["packet"].get("skills_context", [])
+            ],
         )
         trace_pack = trace.build(outcome["status"], metrics)
         pack_paths = repro_trace.write_packs(
@@ -284,6 +288,10 @@ class Runtime:
             },
             hardware_profile=self.hardware_profile,
             retrieval_refs=context_os.retrieval_refs(packet),
+            selected_skills=[
+                {"skill_id": s["skill_id"], "source": s.get("source", "registry")}
+                for s in packet.get("skills_context", [])
+            ],
         )
         trace_pack = trace.build(status, metrics)
         pack_paths = repro_trace.write_packs(

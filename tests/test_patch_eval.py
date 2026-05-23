@@ -119,9 +119,29 @@ class PatchLifecycleTests(unittest.TestCase):
         report = patch_manager.eval_patch(self.config, patch, runtime)
         self.assertEqual(report["patch_id"], "patch_eval_1")
         self.assertIn(report["recommendation"], ("promote", "needs_review", "reject"))
+        # New v0.4.1 fields expose eval/lifecycle/blocking separately.
+        self.assertIn("eval_recommendation", report)
+        self.assertIn("lifecycle_recommendation", report)
+        self.assertIn("blocking_issues", report)
         # Candidate eval file lives at the documented path.
         eval_path = self.storage.path("patches/evals/patch_eval_1.eval.json")
         self.assertTrue(os.path.exists(eval_path))
+
+    def test_eval_with_review_blockers_does_not_recommend_promote(self):
+        # v0.4.1 fix: patch with no intent / no rollback must NOT get a
+        # 'promote' recommendation even when the eval itself is clean.
+        patch = _proposal_patch("patch_blocked")
+        del patch["intent"]
+        del patch["rollback"]
+        self._install(patch)
+        runtime = Runtime(self.config, prefer_backend="offline")
+        report = patch_manager.eval_patch(self.config, patch, runtime)
+        self.assertEqual(report["lifecycle_recommendation"], "needs_review")
+        self.assertNotEqual(report["recommendation"], "promote")
+        self.assertTrue(report["blocking_issues"])
+        # And stable promotion is still refused on this candidate eval.
+        with self.assertRaises(patch_manager.PatchError):
+            patch_manager.promote_patch(self.config, "patch_blocked", "stable")
 
     def test_promote_experimental_to_beta_requires_intent(self):
         patch = _proposal_patch("patch_promote_no_intent")

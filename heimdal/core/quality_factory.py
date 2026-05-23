@@ -100,12 +100,25 @@ def run_quality_factory(
     trace.event("contract_ready", contract_id=contract["contract_id"])
 
     packet = context_os.build_packet(contract, role, envelope, storage, config)
+    selected_skills_refs = [
+        {
+            "skill_id": s["skill_id"],
+            "source": s.get("source", "registry"),
+            "role": role.get("role_id"),
+        }
+        for s in packet["skills_context"]
+    ]
     trace.event(
         "context_packet_ready",
         packet_id=packet["packet_id"],
         truth_refs=context_os.retrieval_refs(packet),
         skills=[s["skill_id"] for s in packet["skills_context"]],
     )
+    # Dedicated event so external tools can find selected skills without
+    # parsing the packet-ready event. Only the skill IDs / source / role go
+    # in the trace -- full guidance content stays in the Context Packet
+    # artifact (which is internal-only).
+    trace.event("skill_selection", selected_skills=selected_skills_refs)
 
     routing = model_router.route(
         contract, role, backend, config, model_override, verifier_override

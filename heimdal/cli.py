@@ -115,7 +115,7 @@ def cmd_run(args) -> int:
         envelope = Storage.read_json(args.input)
         result = runtime.run_envelope(envelope)
     elif args.instruction:
-        envelope = adapter.to_host_task_envelope(args.instruction)
+        envelope = adapter.to_host_task_envelope(args.instruction, role=args.role)
         result = runtime.run_envelope(envelope)
     else:  # 'demo' or no target
         result = runtime.run_demo()
@@ -685,12 +685,16 @@ def cmd_patch(args) -> int:
         if args.json:
             print(json.dumps(report, indent=2, default=str))
         else:
-            print(f"patch_id      : {report['patch_id']}")
-            print(f"recommendation: {report['recommendation']}")
-            print(f"reason        : {report['reason']}")
+            print(f"patch_id              : {report['patch_id']}")
+            print(f"eval_recommendation   : {report['eval_recommendation']}")
+            print(f"lifecycle_recommendation: {report['lifecycle_recommendation']}")
+            print(f"final recommendation  : {report['recommendation']}")
+            print(f"reason                : {report['reason']}")
+            for issue in report.get("blocking_issues", []):
+                print(f"  blocking: {issue}")
             if report["baseline_eval"]:
-                print(f"baseline      : {report['baseline_eval']}")
-            print(f"candidate     : {report['candidate_eval']}")
+                print(f"baseline              : {report['baseline_eval']}")
+            print(f"candidate             : {report['candidate_eval']}")
         return 0 if report["recommendation"] != "reject" else 1
 
     if command == "promote":
@@ -730,6 +734,19 @@ def cmd_skill(args) -> int:
     config = load_config(args.manifest)
     command = args.skill_command
 
+    if command == "bootstrap":
+        installed = skill_registry.bootstrap_seed_skills(config)
+        if args.json:
+            print(json.dumps({"installed": installed}, indent=2))
+        else:
+            if not installed:
+                print("No new seed skills installed (already bootstrapped).")
+            else:
+                print(f"Installed {len(installed)} seed skill(s):")
+                for skill_id in installed:
+                    print(f"  - {skill_id}")
+        return 0
+
     if command == "list":
         registry = _skill_registry(config)
         skills = registry.load()
@@ -738,6 +755,10 @@ def cmd_skill(args) -> int:
         else:
             if not skills:
                 print("No skills installed.")
+                print(
+                    "Hint: run `heimdal skill bootstrap` to install the "
+                    "bundled seed skills."
+                )
                 return 0
             for skill in skills:
                 perf = skill.performance
@@ -941,6 +962,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("target", nargs="?", help="'demo' (default when no input given)")
     p_run.add_argument("--input", help="path to a Host Task Envelope JSON file")
     p_run.add_argument("--instruction", help="run a plain instruction string")
+    p_run.add_argument(
+        "--role",
+        help="role to bind for --instruction (e.g. general, research, dev, ops)",
+    )
     p_run.add_argument("--offline", action="store_true", help="force the offline backend")
     p_run.add_argument("--backend", choices=["ollama", "offline"], help="force a backend")
     p_run.add_argument("--model", help="override the worker model")
@@ -1109,7 +1134,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_skill.add_argument(
         "skill_command",
-        choices=["list", "show", "search", "validate", "install", "archive", "stats"],
+        choices=["list", "show", "search", "validate", "install", "archive",
+                 "stats", "bootstrap"],
     )
     p_skill.add_argument(
         "skill_arg",

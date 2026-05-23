@@ -27,7 +27,15 @@ def _proposal(kind: str, *, intent: str, rationale: str, risk_level: str,
     return proposal
 
 
-def _patch(target: str, change: dict, patch_type: str) -> dict:
+def _patch(target: str, change: dict, patch_type: str, *,
+           intent: str, risk_level: str, rollback: dict | None = None) -> dict:
+    """Build a Dream-generated patch ready for the patch lifecycle.
+
+    The patch carries everything the v0.4.1 promotion gates need to recognise
+    it as a real review candidate -- intent, rollback metadata, risk level,
+    and a created_by tag. ``rollback`` defaults to a review-only note so the
+    operator must explicitly add execution metadata before stable promotion.
+    """
     return {
         "id": new_id("patch"),
         "type": patch_type,
@@ -35,9 +43,19 @@ def _patch(target: str, change: dict, patch_type: str) -> dict:
         "target": target,
         "change": change,
         "rationale": "Dream Mode proposal -- review before promotion.",
+        "intent": intent,
+        "risk_level": risk_level,
+        "created_by": "dream_mode",
         "created_at": now_iso(),
         "eval_run": None,
         "source": "dream_mode",
+        "rollback": rollback or {
+            "note": (
+                "Dream-Mode-generated; revert by removing the change or "
+                "reversing the keys under 'change'."
+            ),
+            "review_only": True,
+        },
     }
 
 
@@ -98,9 +116,10 @@ def _propose_for_missing_source(pattern: dict) -> list[dict]:
 
 
 def _propose_for_weak_retrieval(pattern: dict) -> list[dict]:
+    intent = "Tighten the No-Guess grounding-coverage threshold."
     return [_proposal(
         "patch_proposal",
-        intent="Tighten the No-Guess grounding-coverage threshold.",
+        intent=intent,
         rationale=(
             f"{pattern['count']} task(s) retrieved a snippet that shared only a "
             "couple of generic words with the objective. Consider raising "
@@ -112,6 +131,10 @@ def _propose_for_weak_retrieval(pattern: dict) -> list[dict]:
             target="config.retrieval.min_grounding_coverage",
             change={"set": 0.6, "previous": 0.5},
             patch_type="retrieval_patch",
+            intent=intent,
+            risk_level="medium",
+            rollback={"note": "Restore retrieval.min_grounding_coverage to 0.5.",
+                      "review_only": True},
         ),
     )]
 
@@ -144,9 +167,10 @@ def _propose_for_semantic_miss(pattern: dict) -> list[dict]:
 
 
 def _propose_for_schema_failure(pattern: dict) -> list[dict]:
+    intent = "Add an explicit JSON-shape reminder to schema-required prompts."
     return [_proposal(
         "patch_proposal",
-        intent="Add an explicit JSON-shape reminder to schema-required prompts.",
+        intent=intent,
         rationale=(
             f"{pattern['count']} task(s) failed schema validation. A prompt "
             "patch that restates the required JSON shape close to the answer "
@@ -158,14 +182,19 @@ def _propose_for_schema_failure(pattern: dict) -> list[dict]:
             target="role_pack:general:system_context",
             change={"append": "When asked for JSON, return ONLY a JSON object matching the schema."},
             patch_type="prompt_patch",
+            intent=intent,
+            risk_level="low",
+            rollback={"note": "Remove the appended JSON-only sentence.",
+                      "review_only": True},
         ),
     )]
 
 
 def _propose_for_adapter_issue(pattern: dict) -> list[dict]:
+    intent = "Surface unsupported-adapter errors with a clearer host-side hint."
     return [_proposal(
         "patch_proposal",
-        intent="Surface unsupported-adapter errors with a clearer host-side hint.",
+        intent=intent,
         rationale=(
             f"{pattern['count']} bridge job(s) named an unsupported adapter. A "
             "small message improvement helps host authors recover faster."
@@ -176,14 +205,19 @@ def _propose_for_adapter_issue(pattern: dict) -> list[dict]:
             target="heimdal.bridge:SUPPORTED_ADAPTERS",
             change={"note": "Add adapter to documentation; no code change."},
             patch_type="prompt_patch",
+            intent=intent,
+            risk_level="low",
+            rollback={"note": "Documentation-only patch; no runtime rollback needed.",
+                      "review_only": True},
         ),
     )]
 
 
 def _propose_for_backend_error(pattern: dict) -> list[dict]:
+    intent = "Surface Ollama outages earlier in the bridge cycle."
     return [_proposal(
         "patch_proposal",
-        intent="Surface Ollama outages earlier in the bridge cycle.",
+        intent=intent,
         rationale=(
             f"{pattern['count']} bridge run(s) failed at backend setup. A "
             "scheduler patch could throttle retries while Ollama is down."
@@ -194,6 +228,10 @@ def _propose_for_backend_error(pattern: dict) -> list[dict]:
             target="config.scheduler.work_preempts_background",
             change={"note": "Consider adding ollama-backoff scheduler entry."},
             patch_type="scheduler_patch",
+            intent=intent,
+            risk_level="medium",
+            rollback={"note": "Remove the scheduler entry if added.",
+                      "review_only": True},
         ),
     )]
 

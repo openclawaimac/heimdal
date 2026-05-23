@@ -170,6 +170,34 @@ class DreamRunnerTests(unittest.TestCase):
         self.assertEqual(runs[0]["dream_run_id"], second["dream_run_id"])
         self.assertEqual(runs[1]["dream_run_id"], first["dream_run_id"])
 
+    def test_patch_proposals_are_installed_into_experimental_channel(self):
+        # v0.4.1 fix: Dream-generated patch_proposal must register the inner
+        # patch into storage/patches/experimental/ so the patch lifecycle
+        # CLI can see it without manual surgery.
+        _write_trace(
+            self.storage, task_id="t-weak",
+            events=[{"ts": "x", "name": "no_guess_gate",
+                     "data": {"outcome": "need_input",
+                              "code": "SOURCE_SUPPORT_INSUFFICIENT",
+                              "reason": "weak coverage"}}],
+            status="need_input",
+        )
+        report = dream_runner.run_dream(self.config, source="mixed", count=5)
+        patch_proposals = report["patch_proposals"]
+        self.assertTrue(patch_proposals, "expected weak_retrieval to yield a patch_proposal")
+        from heimdal.core import patch_manager
+        for proposal in patch_proposals:
+            patch_id = proposal["patch"]["id"]
+            found = patch_manager.find_patch(self.config, patch_id)
+            self.assertIsNotNone(found, f"Dream patch {patch_id} missing from lifecycle")
+            patch, channel, _ = found
+            self.assertEqual(channel, "experimental")
+            # The inner patch must carry the v0.4.1-required metadata so
+            # beta promotion doesn't bounce on missing intent / rollback.
+            self.assertTrue(patch["intent"], "Dream patch missing 'intent'")
+            self.assertIn("rollback", patch)
+            self.assertEqual(patch["created_by"], "dream_mode")
+
     def test_dream_mode_never_modifies_stable_storage(self):
         # No writes outside storage/dream/ for a Dream run.
         sentinel = self.storage.write_json("patches/stable/sentinel.json", {"id": "s"})
