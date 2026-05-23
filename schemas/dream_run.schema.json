@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Dream Run",
+  "description": "A single Dream Mode invocation: which inputs were analyzed, where the report lives. The Dream Run is the audit handle; the Dream Report is the content.",
+  "type": "object",
+  "required": [
+    "dream_run_id",
+    "created_at",
+    "source",
+    "count",
+    "inputs_analyzed",
+    "report_ref"
+  ],
+  "properties": {
+    "dream_run_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["failed", "recent", "synthetic", "eval", "mixed"]
+    },
+    "count": {
+      "type": "integer"
+    },
+    "inputs_analyzed": {
+      "type": "object"
+    },
+    "report_ref": {
+      "type": "string"
+    },
+    "proposal_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

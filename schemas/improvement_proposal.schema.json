@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Improvement Proposal",
+  "description": "A structured proposal emitted by Dream Mode. Proposals are review-only artifacts -- never applied automatically. Kind selects which inner payload is populated (patch / skill / eval_case).",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "intent",
+    "rationale",
+    "created_by",
+    "created_at",
+    "risk_level"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "kind": {
+      "type": "string",
+      "enum": ["patch_proposal", "skill_proposal", "eval_case_proposal"]
+    },
+    "intent": {"type": "string"},
+    "rationale": {"type": "string"},
+    "created_by": {"type": "string"},
+    "created_at": {"type": "string"},
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "evidence": {"type": "array"},
+    "patch": {"type": "object"},
+    "skill": {"type": "object"},
+    "eval_case": {"type": "object"},
+    "status": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -15,6 +15,9 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal hermes capabilities [--json]
     heimdal hermes doctor --input <hermes_payload.json>
     heimdal bridge init | submit --input <job.json> | once | watch | status
+    heimdal dream run [--count N --source ... --offline --model ... --verifier ...]
+    heimdal dream report [--id <dream_run_id>]
+    heimdal dream list
     heimdal patch validate <patch_file>
     heimdal truth list | add <file> | search "<query>"
     heimdal logs latest
@@ -37,6 +40,7 @@ from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
 from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
+from heimdal.dream import runner as dream_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
 from heimdal.retrieval.truth_store import TruthStore
@@ -461,6 +465,71 @@ def cmd_hermes(args) -> int:
     return 0 if result["status"] in ("pass", "need_input") else 1
 
 
+# -- dream -----------------------------------------------------------------
+def cmd_dream(args) -> int:
+    config = load_config(args.manifest)
+    command = args.dream_command
+
+    if command == "run":
+        report = dream_runner.run_dream(
+            config,
+            source=args.source or "mixed",
+            count=args.count or 1,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            print(f"dream_run_id: {report['dream_run_id']}")
+            print(f"summary     : {report['summary']}")
+            print(f"patterns    : {len(report['failure_patterns'])}")
+            print(f"proposals   : "
+                  f"patch={len(report['patch_proposals'])}, "
+                  f"skill={len(report['skill_proposals'])}, "
+                  f"eval={len(report['eval_case_proposals'])}")
+            for action in report["recommended_actions"]:
+                print(f"  action: {action}")
+        return 0
+
+    if command == "report":
+        try:
+            report = dream_runner.load_dream_report(config, args.id)
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            print(f"dream_run_id: {report['dream_run_id']}")
+            print(f"created_at  : {report['created_at']}")
+            print(f"source      : {report['source']}")
+            print(f"summary     : {report['summary']}")
+            for pattern in report["failure_patterns"]:
+                print(f"  pattern: {pattern['category']} (x{pattern['count']})")
+            for kind in ("patch_proposals", "skill_proposals", "eval_case_proposals"):
+                for proposal in report[kind]:
+                    print(f"  proposal: {proposal['id']} ({proposal['kind']}) "
+                          f"-- {proposal['intent']}")
+        return 0
+
+    if command == "list":
+        runs = dream_runner.list_dream_runs(config)
+        if args.json:
+            print(json.dumps(runs, indent=2, default=str))
+        else:
+            if not runs:
+                print("No dream runs yet.")
+                return 0
+            for run in runs:
+                print(
+                    f"  {run['dream_run_id']}  "
+                    f"source={run['source']}  count={run['count']}  "
+                    f"created={run['created_at']}"
+                )
+        return 0
+
+    return 2
+
+
 # -- bridge ----------------------------------------------------------------
 def _bridge_defaults(args) -> dict:
     return {
@@ -749,6 +818,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bridge.add_argument("--manifest", help="path to the Heimdal manifest")
     p_bridge.set_defaults(func=cmd_bridge)
+
+    p_dream = sub.add_parser(
+        "dream", help="Dream Mode: mine past runs for improvement proposals"
+    )
+    p_dream.add_argument(
+        "dream_command", choices=["run", "report", "list"]
+    )
+    p_dream.add_argument("--count", type=int, help="max proposals to emit (default 1)")
+    p_dream.add_argument(
+        "--source",
+        choices=list(dream_runner.SOURCES),
+        help="which input bucket to analyze (default mixed)",
+    )
+    p_dream.add_argument("--id", help="dream run id to load (for 'report')")
+    p_dream.add_argument("--offline", action="store_true", help="(reserved -- Dream Mode is offline)")
+    p_dream.add_argument("--backend", choices=["ollama", "offline"])
+    p_dream.add_argument("--model")
+    p_dream.add_argument("--verifier", choices=["rule_based", "hybrid"])
+    p_dream.add_argument("--quality", choices=["B1", "B2", "B3"])
+    p_dream.add_argument("--json", action="store_true")
+    p_dream.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_dream.set_defaults(func=cmd_dream)
 
     p_patch = sub.add_parser("patch", help="patch tools")
     p_patch.add_argument("patch_command", choices=["validate"])

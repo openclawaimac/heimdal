@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Dream Report",
+  "description": "The content of one Dream Mode run: failure patterns mined from past runs plus structured improvement proposals. Dream Mode produces this -- it never mutates stable behavior directly.",
+  "type": "object",
+  "required": [
+    "dream_run_id",
+    "created_at",
+    "source",
+    "inputs_analyzed",
+    "failure_patterns",
+    "patch_proposals",
+    "skill_proposals",
+    "eval_case_proposals",
+    "recommended_actions",
+    "risk_notes",
+    "summary"
+  ],
+  "properties": {
+    "dream_run_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "source": {"type": "string"},
+    "inputs_analyzed": {"type": "object"},
+    "failure_patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "count"],
+        "properties": {
+          "category": {"type": "string"},
+          "count": {"type": "integer"},
+          "examples": {"type": "array"},
+          "description": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "patch_proposals": {"type": "array"},
+    "skill_proposals": {"type": "array"},
+    "eval_case_proposals": {"type": "array"},
+    "recommended_actions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "risk_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "summary": {"type": "string"}
+  },
+  "additionalProperties": true
+}
