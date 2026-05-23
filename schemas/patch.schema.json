@@ -24,7 +24,8 @@
         "retrieval_patch",
         "scheduler_patch",
         "sandbox_patch",
-        "model_profile_patch"
+        "model_profile_patch",
+        "eval_case_patch"
       ]
     },
     "channel": {
@@ -33,7 +34,8 @@
         "experimental",
         "beta",
         "stable",
-        "rejected"
+        "rejected",
+        "archived"
       ]
     },
     "target": {
@@ -56,6 +58,31 @@
     },
     "source": {
       "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "string"
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "tests": {
+      "type": "array"
+    },
+    "rollback": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string"
+    },
+    "review": {
+      "type": "object"
     }
   },
   "additionalProperties": true

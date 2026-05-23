@@ -596,14 +596,124 @@ def cmd_bridge(args) -> int:
 # -- patch -----------------------------------------------------------------
 def cmd_patch(args) -> int:
     config = load_config(args.manifest)
-    ok, errors = patch_manager.validate_patch_file(args.patch_file, config)
-    if ok:
-        print(f"PASS: patch is valid - {args.patch_file}")
+    command = args.patch_command
+
+    if command == "validate":
+        if not args.patch_file:
+            print("error: 'patch validate' requires <patch_file>", file=sys.stderr)
+            return 2
+        ok, errors = patch_manager.validate_patch_file(args.patch_file, config)
+        if ok:
+            print(f"PASS: patch is valid - {args.patch_file}")
+            return 0
+        print(f"REJECTED: patch is invalid - {args.patch_file}")
+        for error in errors:
+            print(f"  - {error}")
+        return 1
+
+    if command == "list":
+        patches = patch_manager.list_patches(config, channel=args.channel)
+        if args.json:
+            print(json.dumps(patches, indent=2, default=str))
+        else:
+            if not patches:
+                print("No patches.")
+                return 0
+            for patch in patches:
+                print(
+                    f"  {patch.get('channel'):<13} {patch['id']:<28} "
+                    f"{patch.get('type', '?'):<22} {patch.get('intent', '')[:50]}"
+                )
         return 0
-    print(f"REJECTED: patch is invalid - {args.patch_file}")
-    for error in errors:
-        print(f"  - {error}")
-    return 1
+
+    if command == "show":
+        if not args.patch_file:
+            print("error: 'patch show' requires <patch_id>", file=sys.stderr)
+            return 2
+        found = patch_manager.find_patch(config, args.patch_file)
+        if not found:
+            print(f"error: patch not found: {args.patch_file}", file=sys.stderr)
+            return 2
+        patch, _, _ = found
+        print(json.dumps(patch, indent=2, default=str))
+        return 0
+
+    if command == "review":
+        if not args.patch_file:
+            print("error: 'patch review' requires <patch_id>", file=sys.stderr)
+            return 2
+        found = patch_manager.find_patch(config, args.patch_file)
+        if not found:
+            print(f"error: patch not found: {args.patch_file}", file=sys.stderr)
+            return 2
+        patch, _, _ = found
+        review = patch_manager.review_patch(patch)
+        patch_manager.write_review(config, review)
+        if args.json:
+            print(json.dumps(review, indent=2, default=str))
+        else:
+            print(f"patch_id     : {review['patch_id']}")
+            print(f"type         : {review['patch_type']}")
+            print(f"risk_level   : {review['risk_level']}")
+            print(f"auto_appliable: {review['auto_appliable']}")
+            for issue in review["issues"]:
+                print(f"  issue: {issue}")
+            for gate in review["recommended_gates"]:
+                print(f"  gate : {gate}")
+        return 0
+
+    if command == "eval":
+        if not args.patch_file:
+            print("error: 'patch eval' requires <patch_id>", file=sys.stderr)
+            return 2
+        found = patch_manager.find_patch(config, args.patch_file)
+        if not found:
+            print(f"error: patch not found: {args.patch_file}", file=sys.stderr)
+            return 2
+        patch, _, _ = found
+        runtime = Runtime(
+            config,
+            prefer_backend=_prefer_backend(args),
+            model_override=args.model,
+            verifier_override=args.verifier,
+        )
+        report = patch_manager.eval_patch(config, patch, runtime)
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            print(f"patch_id      : {report['patch_id']}")
+            print(f"recommendation: {report['recommendation']}")
+            print(f"reason        : {report['reason']}")
+            if report["baseline_eval"]:
+                print(f"baseline      : {report['baseline_eval']}")
+            print(f"candidate     : {report['candidate_eval']}")
+        return 0 if report["recommendation"] != "reject" else 1
+
+    if command == "promote":
+        if not (args.patch_file and args.to):
+            print("error: 'patch promote' requires <patch_id> and --to", file=sys.stderr)
+            return 2
+        try:
+            patch = patch_manager.promote_patch(config, args.patch_file, args.to)
+        except patch_manager.PatchError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"promoted: {patch['id']} -> {patch['channel']}")
+        return 0
+
+    if command == "reject":
+        if not (args.patch_file and args.reason):
+            print("error: 'patch reject' requires <patch_id> and --reason", file=sys.stderr)
+            return 2
+        try:
+            patch = patch_manager.reject_patch(config, args.patch_file, args.reason)
+        except patch_manager.PatchError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"rejected: {patch['id']} ({args.reason})")
+        return 0
+
+    return 2
 
 
 # -- truth -----------------------------------------------------------------
@@ -841,10 +951,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_dream.add_argument("--manifest", help="path to the Heimdal manifest")
     p_dream.set_defaults(func=cmd_dream)
 
-    p_patch = sub.add_parser("patch", help="patch tools")
-    p_patch.add_argument("patch_command", choices=["validate"])
-    p_patch.add_argument("patch_file", help="path to a patch JSON file")
+    p_patch = sub.add_parser("patch", help="patch promotion lifecycle")
+    p_patch.add_argument(
+        "patch_command",
+        choices=["validate", "list", "show", "review", "eval", "promote", "reject"],
+    )
+    p_patch.add_argument(
+        "patch_file",
+        nargs="?",
+        help="patch JSON file (for 'validate') or <patch_id> (for show/review/eval/promote/reject)",
+    )
+    p_patch.add_argument("--channel", choices=patch_manager.CHANNEL_DIRS)
+    p_patch.add_argument("--to", choices=patch_manager.CHANNELS,
+                         help="target channel for 'promote'")
+    p_patch.add_argument("--reason", help="rejection reason for 'reject'")
+    p_patch.add_argument("--offline", action="store_true")
+    p_patch.add_argument("--backend", choices=["ollama", "offline"])
+    p_patch.add_argument("--model")
+    p_patch.add_argument("--verifier", choices=["rule_based", "hybrid"])
+    p_patch.add_argument("--json", action="store_true")
     p_patch.add_argument("--manifest", help="path to the Heimdal manifest")
+    # 'patch_file' doubles as the patch id for lifecycle commands; expose
+    # both names so help text is honest.
     p_patch.set_defaults(func=cmd_patch)
 
     p_truth = sub.add_parser("truth", help="manage the local Truth Vault")
