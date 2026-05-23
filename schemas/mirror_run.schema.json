@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Mirror Run",
+  "description": "One Mirror Mode invocation. Records what was compared, which teacher was used, the privacy/budget gates that fired, and where the diffs/proposals live.",
+  "type": "object",
+  "required": [
+    "mirror_run_id",
+    "created_at",
+    "source",
+    "teacher_provider",
+    "privacy_mode",
+    "enabled",
+    "dry_run",
+    "cases_selected",
+    "teacher_calls",
+    "usage",
+    "summary"
+  ],
+  "properties": {
+    "mirror_run_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "source": {"type": "string"},
+    "teacher_provider": {"type": ["string", "null"]},
+    "teacher_model": {"type": ["string", "null"]},
+    "privacy_mode": {"type": "string"},
+    "enabled": {"type": "boolean"},
+    "dry_run": {"type": "boolean"},
+    "cases_selected": {"type": "array"},
+    "teacher_calls": {"type": "array"},
+    "diffs": {"type": "array"},
+    "proposals": {"type": "array"},
+    "usage": {
+      "type": "object",
+      "properties": {
+        "calls": {"type": "integer"},
+        "input_tokens": {"type": "integer"},
+        "output_tokens": {"type": "integer"},
+        "estimated_cost": {"type": ["number", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "blocked_reason": {"type": ["string", "null"]},
+    "summary": {"type": "string"},
+    "report_ref": {"type": "string"}
+  },
+  "additionalProperties": true
+}

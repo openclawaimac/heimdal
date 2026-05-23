@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heimdal-engine"
-version = "0.4.2"
+version = "0.5.0"
 description = "Heimdal Engine: a host-agnostic local agent engine with a quality-controlled orchestration runtime."
 readme = "README.md"
 requires-python = ">=3.11"

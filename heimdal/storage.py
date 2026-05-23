@@ -42,6 +42,14 @@ LAYOUT = [
     "dream/synthetic_tasks",
     "dream/failure_mining",
     "dream/logs",
+    "mirror/runs",
+    "mirror/reports",
+    "mirror/comparisons",
+    "mirror/teacher_outputs",
+    "mirror/redacted_inputs",
+    "mirror/diffs",
+    "mirror/proposals",
+    "mirror/logs",
 ]
 
 

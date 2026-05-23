@@ -80,6 +80,10 @@ class Config:
         return self.manifest.get("retrieval", {})
 
     @property
+    def mirror(self) -> dict:
+        return self.manifest.get("mirror", {})
+
+    @property
     def privacy_mode(self) -> str:
         return self.runtime.get("privacy_mode", "local_only")
 

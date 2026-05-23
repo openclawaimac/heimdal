@@ -18,6 +18,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal dream run [--count N --source ... --offline --model ... --verifier ...]
     heimdal dream report [--id <dream_run_id>]
     heimdal dream list
+    heimdal mirror {run, list, report, show} [--teacher stub|manual|openai|anthropic ...]
     heimdal patch validate <patch_file>
     heimdal patch {list, show, review, eval, promote --to <ch>, reject --reason "..."}
     heimdal skill {list, show, search, validate, install, archive, stats}
@@ -43,6 +44,7 @@ from heimdal.config import load_config
 from heimdal.core import eval_runner, intake, patch_manager
 from heimdal.core.runtime import Runtime
 from heimdal.dream import runner as dream_runner
+from heimdal.mirror import runner as mirror_runner
 from heimdal.hardware.profiler import detect_ollama, full_profile
 from heimdal.ids import now_compact
 from heimdal.retrieval.truth_store import TruthStore
@@ -528,6 +530,79 @@ def cmd_dream(args) -> int:
                     f"  {run['dream_run_id']}  "
                     f"source={run['source']}  count={run['count']}  "
                     f"created={run['created_at']}"
+                )
+        return 0
+
+    return 2
+
+
+# -- mirror ----------------------------------------------------------------
+def cmd_mirror(args) -> int:
+    config = load_config(args.manifest)
+    command = args.mirror_command
+
+    if command == "run":
+        run = mirror_runner.run_mirror(
+            config,
+            source=args.source or "mixed",
+            teacher=args.teacher,
+            teacher_model=args.teacher_model,
+            limit=args.limit,
+            dry_run=bool(args.dry_run),
+            privacy_override=args.privacy,
+            max_teacher_calls=args.max_teacher_calls,
+        )
+        if args.json:
+            print(json.dumps(run, indent=2, default=str))
+        else:
+            print(f"mirror_run_id : {run['mirror_run_id']}")
+            print(f"teacher       : {run['teacher_provider']}/{run['teacher_model']}")
+            print(f"privacy_mode  : {run['privacy_mode']}")
+            print(f"dry_run       : {run['dry_run']}")
+            print(f"cases         : {len(run['cases_selected'])}")
+            print(f"teacher_calls : {len(run['teacher_calls'])}")
+            print(f"summary       : {run['summary']}")
+            if run.get("blocked_reason"):
+                print(f"blocked       : {run['blocked_reason']}")
+        # Non-zero only when the run was blocked, not when it merely had
+        # zero cases (e.g. fresh storage on a dry-run).
+        return 1 if run.get("blocked_reason") else 0
+
+    if command == "list":
+        runs = mirror_runner.list_mirror_runs(config)
+        if args.json:
+            print(json.dumps(runs, indent=2, default=str))
+        else:
+            if not runs:
+                print("No mirror runs yet.")
+                return 0
+            for run in runs:
+                print(
+                    f"  {run['mirror_run_id']}  "
+                    f"teacher={run['teacher_provider']}  "
+                    f"source={run['source']}  "
+                    f"created={run['created_at']}"
+                )
+        return 0
+
+    if command in ("report", "show"):
+        try:
+            report = mirror_runner.load_mirror_report(config, args.id)
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            print(f"mirror_run_id : {report['mirror_run_id']}")
+            print(f"created_at    : {report['created_at']}")
+            print(f"teacher       : {report['teacher_provider']}/{report['teacher_model']}")
+            print(f"privacy_mode  : {report['privacy_mode']}")
+            print(f"summary       : {report['summary']}")
+            for call in report["teacher_calls"]:
+                print(
+                    f"  call: {call.get('case_id')} -> {call.get('status')} "
+                    f"({call.get('provider', '-')})"
                 )
         return 0
 
@@ -1044,6 +1119,38 @@ def build_parser() -> argparse.ArgumentParser:
     p_hermes.add_argument("--json", action="store_true", help="emit the Hermes result as JSON")
     p_hermes.add_argument("--manifest", help="path to the Heimdal manifest")
     p_hermes.set_defaults(func=cmd_hermes)
+
+    p_mirror = sub.add_parser(
+        "mirror", help="Mirror Mode: optional cloud-teacher comparison"
+    )
+    p_mirror.add_argument(
+        "mirror_command", choices=["run", "list", "report", "show"]
+    )
+    p_mirror.add_argument(
+        "--source", choices=list(mirror_runner.SOURCES),
+        help="which input bucket to compare (default mixed)",
+    )
+    p_mirror.add_argument(
+        "--teacher",
+        choices=["stub", "stub_hallucinator", "manual", "openai", "anthropic"],
+        help="teacher provider (default: stub)",
+    )
+    p_mirror.add_argument("--teacher-model", help="teacher model name (provider-specific)")
+    p_mirror.add_argument("--limit", type=int, help="max cases to select")
+    p_mirror.add_argument(
+        "--max-teacher-calls", type=int,
+        help="max teacher calls per run (overrides manifest)",
+    )
+    p_mirror.add_argument(
+        "--privacy", choices=["local_only", "cloud_allowed"],
+        help="override manifest privacy_mode for this run",
+    )
+    p_mirror.add_argument("--dry-run", action="store_true",
+                          help="select cases and show what would be sent; no calls")
+    p_mirror.add_argument("--id", help="mirror run id (for 'report' / 'show')")
+    p_mirror.add_argument("--json", action="store_true")
+    p_mirror.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_mirror.set_defaults(func=cmd_mirror)
 
     p_bridge = sub.add_parser(
         "bridge", help="local file bridge for external local agents"

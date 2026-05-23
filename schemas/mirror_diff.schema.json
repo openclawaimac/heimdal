@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal Mirror Diff",
+  "description": "Per-case structured diff between Heimdal's local output and a teacher's output across 14 dimensions. The teacher is not assumed correct -- hallucination and unsupported claims can mark the teacher worse for those dimensions.",
+  "type": "object",
+  "required": [
+    "diff_id",
+    "case_id",
+    "scores",
+    "teacher_better",
+    "local_better",
+    "mixed",
+    "findings"
+  ],
+  "properties": {
+    "diff_id": {"type": "string"},
+    "case_id": {"type": "string"},
+    "mirror_run_id": {"type": "string"},
+    "local_output_ref": {"type": "string"},
+    "teacher_output_ref": {"type": "string"},
+    "scores": {
+      "type": "object",
+      "required": ["local", "teacher"],
+      "properties": {
+        "local": {"type": "object"},
+        "teacher": {"type": "object"}
+      }
+    },
+    "teacher_better": {"type": "boolean"},
+    "local_better": {"type": "boolean"},
+    "mixed": {"type": "boolean"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dimension", "severity", "finding"],
+        "properties": {
+          "dimension": {"type": "string"},
+          "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+          "finding": {"type": "string"},
+          "evidence": {"type": "string"},
+          "recommendation": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "proposal_candidates": {"type": "array"}
+  },
+  "additionalProperties": true
+}

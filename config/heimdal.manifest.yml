@@ -51,3 +51,23 @@ verifier:
   semantic_verifier_model: null
 sandbox:
   policy_file: config/sandbox_policy.yml
+mirror:
+  # Mirror Mode is OFF by default. When enabled, it compares Heimdal's local
+  # outputs against an optional cloud/frontier teacher and emits improvement
+  # proposals -- it never mutates stable behavior.
+  enabled: false
+  privacy_mode: local_only
+  teacher_provider: null
+  teacher_model: null
+  daily_token_budget: 0
+  max_teacher_calls_per_run: 3
+  max_input_tokens_per_call: 8000
+  max_output_tokens_per_call: 2000
+  redact_before_send: true
+  allowed_sources:
+    - eval
+    - recent
+    - failed
+    - dream
+  store_teacher_outputs: false
+  store_diffs: true
