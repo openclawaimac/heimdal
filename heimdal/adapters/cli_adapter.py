@@ -47,7 +47,11 @@ class CLIAdapter(HostAdapter):
                     "inputs": {},
                     "constraints": {},
                     "priority": "P2",
-                    "budget": {"quality_level": "B1"},
+                    # Leave the budget empty so the active runtime profile's
+                    # default_quality_level wins (v0.6.2). When no profile is
+                    # active, build_contract falls back to the manifest's
+                    # budgets.default_quality_level -- still B1 by default.
+                    "budget": {},
                     "expected_outputs": ["markdown_response"],
                 },
                 "runtime_hints": {},

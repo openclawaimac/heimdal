@@ -140,6 +140,31 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["quality_level"], "B1")
 
 
+class CLIRunPathProfileTests(unittest.TestCase):
+    """Regression: `heimdal run --instruction` must let the active profile
+    decide quality_level; the CLI adapter must not hardcode B1 into the
+    envelope it builds, otherwise the profile default is silently shadowed."""
+
+    def test_cli_run_instruction_picks_up_profile_default(self):
+        tmp = tempfile.mkdtemp()
+        manifest = write_temp_manifest(tmp, tmp)
+        # Pin profile to factory (default_quality_level=B3) so the run's
+        # metrics MUST end up at B3 if the wiring is right.
+        config = temp_config(tmp)
+        storage = Storage(config.storage_root).ensure()
+        runtime_profile.write(storage, "factory")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main([
+                "run", "--instruction", "Explain a queue.",
+                "--offline", "--json", "--manifest", manifest,
+            ])
+        self.assertEqual(code, 0)
+        result = json.loads(buf.getvalue())
+        self.assertEqual(result["metrics"]["quality_level"], "B3")
+        self.assertEqual(result["metrics"]["runtime_profile"], "factory")
+
+
 class ProfileCLITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

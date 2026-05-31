@@ -243,7 +243,12 @@ def build_matrix(
         "ollama": ollama,
         "model_capabilities": model_capabilities,
         "recommended_runtime_profile": profile,
-        "recommended_role_assignments": {},  # v0.6.1 fills this
+        # Role assignments are produced separately by `heimdal models assign`
+        # (v0.6.1) and stored at storage/runtime/role_assignments.json. The
+        # matrix records the empty stub for backward compatibility with the
+        # v0.6.0 schema; the canonical source for "who is the worker model?"
+        # is the role_assignments artifact, not this field.
+        "recommended_role_assignments": {},
         "warnings": warnings,
     }
 
