@@ -4,7 +4,12 @@ Heimdal Engine is a **host-agnostic local agent engine**. Externally it appears
 as one agent; internally it runs a quality-controlled orchestration runtime so
 that smaller local models can produce frontier-like agent outcomes through
 architecture — context discipline, retrieval, verification, evals, patching, and
-hardware-aware scheduling — rather than raw model size.
+hardware-adaptive runtime profiles — rather than raw model size.
+
+Multi-GPU machines: Heimdal **detects** multiple GPUs and **profiles** for them
+(`pipeline` / `factory` runtime profiles get bigger context + quality budgets),
+but the inference loop is still serial against one Ollama endpoint. Concurrent
+per-role / per-GPU execution is on the roadmap (v0.7.x), not shipped.
 
 The full specification lives in [`docs/builder_pack/`](docs/builder_pack/);
 start with `docs/builder_pack/INDEX.md`.
@@ -26,24 +31,34 @@ pipeline runnable.
 ## CLI
 
 ```bash
-heimdal doctor [--json] [--model <name>]      # profile hardware + model backend
-heimdal run demo                              # run the built-in demo task
+# Hardware + runtime profile (v0.6.x)
+heimdal doctor [--json] [--capability-test] [--all-models] [--write-profile]
+heimdal doctor --profile                      # print only the recommended profile name
+heimdal models {list, capabilities, assign --write, roles, pin, unpin}
+heimdal profile {detect, show, set <name>, explain, write}
+
+# Run a task
+heimdal run demo                              # built-in demo task
 heimdal run --input examples/tasks/simple_task.json
-heimdal run --instruction "Explain what a queue is."
+heimdal run --instruction "Explain a queue." [--role research]
 heimdal eval run                              # run the eval suite + write a summary
-heimdal verify --task task.json --answer answer.json   # verify a host-supplied answer
-heimdal openclaw run --input task.json        # run an OpenClaw payload through Heimdal
-heimdal hermes run --input task.json          # run a Hermes payload through Heimdal
-heimdal hermes capabilities --json            # report host-integration capabilities
-heimdal bridge init                           # create the local file bridge dirs
-heimdal bridge submit --input examples/bridge/hermes_task.json
-heimdal bridge once --backend offline         # process inbox jobs and exit
-heimdal bridge watch --backend ollama --model qwen2.5:7b --verifier hybrid
-heimdal patch validate examples/patches/good.json
-heimdal truth list                            # list local Truth Vault sources
-heimdal truth add notes.md                    # add a .md/.txt file to the vault
-heimdal truth search "refund policy"          # BM25 search over the vault
-heimdal logs latest                           # inspect the most recent run
+heimdal verify --task task.json --answer answer.json    # verifier-only path
+
+# Host integrations
+heimdal openclaw run --input task.json
+heimdal hermes run --input task.json
+heimdal hermes capabilities --json
+heimdal bridge {init, submit --input <job.json>, once, watch, status}
+
+# Self-improvement loop (v0.4.x / v0.5.x)
+heimdal dream {run, report, list}             # mine past runs for proposals
+heimdal patch {validate, list, show, review, eval, promote --to <ch>, reject --reason "..."}
+heimdal skill {list, show, search, validate, install, archive, stats, bootstrap}
+heimdal mirror {run, list, report, show, diff, proposals, promote-proposal}
+
+# Local data
+heimdal truth {list, add <file>, search "<query>"}
+heimdal logs latest
 ```
 
 Without an install, use `python -m heimdal <command>`.

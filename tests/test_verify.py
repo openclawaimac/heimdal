@@ -55,6 +55,15 @@ class VerifyEnvelopeTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["code"], "VERIFIER_SEMANTIC_FAIL")
 
+    def test_verify_metrics_include_runtime_profile_fields(self):
+        # The verify path was missing the v0.6.x profile + assignment fields
+        # that run_envelope reports. Regression test so both paths stay in
+        # sync.
+        result = _runtime("rule_based").verify_envelope(self._envelope(), _GOOD_ANSWER)
+        for key in ("runtime_profile", "profile_source", "profile_limits",
+                    "assignment_source"):
+            self.assertIn(key, result["metrics"])
+
     def test_rule_based_mode_runs_without_semantic_verifier(self):
         result = _runtime("rule_based").verify_envelope(self._envelope(), _GOOD_ANSWER)
         self.assertEqual(result["status"], "pass")

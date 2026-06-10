@@ -292,6 +292,10 @@ class Runtime:
             "quality_level": routing["quality_level"],
             "verifier_backend": routing["verifier_backend"],
             "semantic_verifier_model": routing["semantic_verifier_model"],
+            "assignment_source": self.assignment_source,
+            "runtime_profile": self.runtime_profile["name"],
+            "profile_source": self.runtime_profile["source"],
+            "profile_limits": self.runtime_profile["limits"],
         }
         repro = repro_trace.build_repro_pack(
             models=models,

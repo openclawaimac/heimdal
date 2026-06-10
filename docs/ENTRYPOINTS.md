@@ -95,6 +95,37 @@ internal-only artifacts.
 Output is machine-readable JSON: `{status, checks, warnings, suggested_fixes}`
 with `status` one of `pass | warning | fail`. Exits non-zero only on `fail`.
 
+## `heimdal doctor` / `heimdal models` / `heimdal profile` -- adaptive runtime
+
+The v0.6.x trio configures Heimdal for the machine it's installed on:
+
+    heimdal doctor --capability-test --write-profile   # capability matrix
+    heimdal models assign --write                      # role -> model mapping
+    heimdal profile detect                             # cpu_only | dev | single_gpu | pipeline | factory
+    heimdal profile set <name>                         # manual override
+    heimdal profile show                               # active limits + source
+    heimdal profile explain <name>                     # human-readable
+
+After `models assign --write`, `heimdal run` uses the assigned worker
+model when no `--model` is given. Operator pins
+(`heimdal models pin --role worker --model qwen2.5:7b`) override
+auto-assignment. The active profile's `default_quality_level` /
+`max_context_tokens` / `max_repair_iterations` fill in budget defaults
+the task didn't pin -- explicit constraints in the envelope always win.
+
+## `heimdal dream` / `heimdal patch` / `heimdal skill` / `heimdal mirror`
+
+The v0.4.x / v0.5.x self-improvement + teacher-comparison loops:
+
+    heimdal dream {run, report, list}              # mine past traces for proposals
+    heimdal patch {list, show, review, eval, promote --to beta, reject}
+    heimdal skill {list, search, show, bootstrap, validate, install, archive}
+    heimdal mirror {run [--dry-run --teacher stub], diff, proposals, promote-proposal}
+
+Dream proposals install into `storage/patches/experimental/`. Mirror
+diffs install patch proposals into the same lifecycle. Both feed
+`heimdal patch promote --to beta` after review.
+
 ## Quick recommendation
 
 | Caller | Use |
