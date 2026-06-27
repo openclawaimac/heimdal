@@ -198,7 +198,26 @@ def _latest_eval_summary(runtime) -> dict | None:
         return None
 
 
-def eval_patch(config, patch: dict, runtime) -> dict:
+# Eval categories most relevant to each patch type, for `--targeted`. must_pass
+# is always included so the promotion gate stays meaningful.
+TARGETED_CATEGORIES = {
+    "retrieval_patch": ["must_pass", "no_guess"],
+    "rubric_patch": ["must_pass", "no_guess", "schema"],
+    "skill_patch": ["must_pass", "smoke"],
+    "prompt_patch": ["must_pass", "smoke"],
+    "eval_case_patch": ["must_pass", "no_guess"],
+    "sandbox_patch": ["must_pass"],
+    "scheduler_patch": ["must_pass"],
+    "model_profile_patch": ["must_pass", "smoke"],
+}
+
+
+def targeted_categories_for(patch_type: str) -> list[str]:
+    """Eval categories relevant to a patch type (always includes must_pass)."""
+    return TARGETED_CATEGORIES.get(patch_type, ["must_pass"])
+
+
+def eval_patch(config, patch: dict, runtime, *, targeted: bool = False) -> dict:
     """Run the eval suite as the candidate; compare to the previous run as baseline.
 
     Heimdal doesn't currently *apply* most patch types before evaluation, so
@@ -206,9 +225,16 @@ def eval_patch(config, patch: dict, runtime) -> dict:
     applyable types (eval_case_patch), a future revision can apply the patch
     against a fork of the eval suite -- this revision intentionally keeps the
     comparison conservative and obvious.
+
+    ``targeted`` runs only the eval categories relevant to the patch type
+    (always including must_pass) for a faster review signal; the full suite
+    remains the default and the gate for stable promotion.
     """
-    baseline = _latest_eval_summary(runtime)
-    candidate = eval_runner.run_evals(runtime)
+    baseline = None if targeted else _latest_eval_summary(runtime)
+    categories = (
+        targeted_categories_for(patch.get("type", "")) if targeted else None
+    )
+    candidate = eval_runner.run_evals(runtime, categories=categories)
 
     baseline_rate = (baseline or {}).get("pass_rate")
     candidate_rate = candidate["pass_rate"]
@@ -278,6 +304,8 @@ def eval_patch(config, patch: dict, runtime) -> dict:
             "pass_rate": candidate_rate,
             "must_pass_all_passed": candidate.get("must_pass_all_passed"),
         },
+        "targeted": targeted,
+        "categories_run": candidate.get("categories_run", []),
         "regressions": regressions,
         "improvements": improvements,
         "eval_recommendation": eval_recommendation,

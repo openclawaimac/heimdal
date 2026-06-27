@@ -112,6 +112,34 @@ class PatchLifecycleTests(unittest.TestCase):
         self.assertTrue(os.path.exists(path))
         self.assertEqual(Storage.read_json(path)["patch_id"], "patch_review_2")
 
+    def test_targeted_eval_runs_only_relevant_categories(self):
+        # A retrieval_patch targeted eval runs must_pass + no_guess only --
+        # not smoke/schema. The full suite stays the default.
+        patch = _proposal_patch("patch_targeted", type="retrieval_patch")
+        self._install(patch)
+        runtime = Runtime(self.config, prefer_backend="offline")
+        report = patch_manager.eval_patch(
+            self.config, patch, runtime, targeted=True,
+        )
+        self.assertTrue(report["targeted"])
+        self.assertEqual(
+            sorted(report["categories_run"]), ["must_pass", "no_guess"]
+        )
+        # must_pass still ran, so the gate is meaningful.
+        self.assertIn(report["recommendation"], ("promote", "needs_review", "reject"))
+
+    def test_targeted_eval_does_not_pollute_full_baseline(self):
+        from heimdal.core import eval_runner
+        runtime = Runtime(self.config, prefer_backend="offline")
+        # A full run, then a targeted run, then another full run: the second
+        # full run's prior_pass_rate must come from the FIRST full run, not
+        # the targeted one in between.
+        eval_runner.run_evals(runtime)
+        eval_runner.run_evals(runtime, categories=["must_pass"])
+        third = eval_runner.run_evals(runtime)
+        self.assertFalse(third["targeted"])
+        self.assertEqual(third["prior_pass_rate"], 1.0)
+
     def test_eval_patch_writes_candidate_eval_and_recommendation(self):
         patch = _proposal_patch("patch_eval_1")
         self._install(patch)

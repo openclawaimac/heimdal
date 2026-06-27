@@ -1116,7 +1116,9 @@ def cmd_patch(args) -> int:
             model_override=args.model,
             verifier_override=args.verifier,
         )
-        report = patch_manager.eval_patch(config, patch, runtime)
+        report = patch_manager.eval_patch(
+            config, patch, runtime, targeted=bool(getattr(args, "targeted", False))
+        )
         if args.json:
             print(json.dumps(report, indent=2, default=str))
         else:
@@ -1687,6 +1689,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_patch.add_argument("--to", choices=patch_manager.CHANNELS,
                          help="target channel for 'promote'")
     p_patch.add_argument("--reason", help="rejection reason for 'reject'")
+    p_patch.add_argument(
+        "--targeted", action="store_true",
+        help="for 'eval': run only the eval categories relevant to the patch type",
+    )
     p_patch.add_argument("--offline", action="store_true")
     p_patch.add_argument("--backend", choices=["ollama", "offline"])
     p_patch.add_argument("--model")

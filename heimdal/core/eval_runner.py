@@ -73,7 +73,11 @@ def load_suite(eval_dir: str | None = None) -> dict[str, list[dict]]:
 
 
 def _previous_pass_rate(runtime: Runtime) -> float | None:
-    """Pass rate of the most recent eval run, used for regression detection."""
+    """Pass rate of the most recent FULL eval run, for regression detection.
+
+    Targeted (subset) runs are skipped -- their pass_rate has a different
+    denominator and would distort the comparison for a later full run.
+    """
     runs_dir = runtime.storage.path("eval_runs")
     if not os.path.isdir(runs_dir):
         return None
@@ -82,13 +86,15 @@ def _previous_pass_rate(runtime: Runtime) -> float | None:
         for name in os.listdir(runs_dir)
         if os.path.exists(os.path.join(runs_dir, name, "summary.json"))
     ]
-    if not summaries:
-        return None
-    latest = max(summaries, key=os.path.getmtime)
-    try:
-        return Storage.read_json(latest).get("pass_rate")
-    except (OSError, json.JSONDecodeError):
-        return None
+    for path in sorted(summaries, key=os.path.getmtime, reverse=True):
+        try:
+            data = Storage.read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("targeted"):
+            continue
+        return data.get("pass_rate")
+    return None
 
 
 def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
@@ -116,11 +122,27 @@ def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
     }
 
 
-def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> dict:
-    """Run the full eval suite and write a summary JSON."""
+def run_evals(
+    runtime: Runtime | None = None,
+    eval_dir: str | None = None,
+    categories: list[str] | None = None,
+) -> dict:
+    """Run the eval suite and write a summary JSON.
+
+    ``categories`` (v0.6.x) restricts the run to a subset of eval categories
+    -- a *targeted* run. Targeted runs are marked ``targeted: true`` in the
+    summary and are excluded from the regression baseline so they can't
+    pollute a later full-suite comparison.
+    """
     runtime = runtime or Runtime()
     suite = load_suite(eval_dir)
-    prior_rate = _previous_pass_rate(runtime)
+    targeted = categories is not None
+    if targeted:
+        wanted = set(categories)
+        suite = {k: v for k, v in suite.items() if k in wanted}
+    # A targeted run compares against nothing -- a subset pass_rate is not
+    # comparable to a full-suite baseline.
+    prior_rate = None if targeted else _previous_pass_rate(runtime)
 
     results: list[dict] = []
     category_stats: dict[str, dict] = {}
@@ -161,8 +183,13 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
     total = len(results)
     total_passed = sum(1 for r in results if r["passed"])
     pass_rate = round(total_passed / total, 4) if total else 0.0
-    must_pass = category_stats["must_pass"]
-    must_pass_all = must_pass["total"] > 0 and must_pass["passed"] == must_pass["total"]
+    # must_pass may be absent in a targeted run that didn't include it; treat
+    # a missing must_pass category as "gate not satisfied" rather than crash.
+    must_pass = category_stats.get("must_pass")
+    must_pass_all = bool(
+        must_pass and must_pass["total"] > 0
+        and must_pass["passed"] == must_pass["total"]
+    )
     regressed = bool(
         prior_rate is not None and pass_rate < prior_rate - REGRESSION_TOLERANCE
     )
@@ -175,6 +202,8 @@ def run_evals(runtime: Runtime | None = None, eval_dir: str | None = None) -> di
         "passed": total_passed,
         "pass_rate": pass_rate,
         "categories": category_stats,
+        "categories_run": sorted(suite.keys()),
+        "targeted": targeted,
         "must_pass_all_passed": must_pass_all,
         "prior_pass_rate": prior_rate,
         "regressed": regressed,

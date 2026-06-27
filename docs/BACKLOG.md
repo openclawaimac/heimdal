@@ -79,9 +79,12 @@ host adapters.
       in the repro pack as `selected_skills`). Add a test. (Done: logs reads
       the repro pack's selected_skills, surfaces a `skills:` line + a
       selected_skills field in --json.)
-- [ ] `heimdal patch eval` should accept `--targeted` to run only the eval
+- [x] `heimdal patch eval` should accept `--targeted` to run only the eval
       categories relevant to the patch type (e.g. retrieval_patch → no_guess
-      + must_pass), keeping full-suite as the default. Add a test.
+      + must_pass), keeping full-suite as the default. Add a test. (Done:
+      run_evals gains a categories filter; targeted runs are marked and
+      excluded from the regression baseline; patch type→categories map always
+      includes must_pass.)
 
 ## Needs approval (loop must NOT build these autonomously)
 
