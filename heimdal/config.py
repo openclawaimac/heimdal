@@ -112,9 +112,34 @@ class Config:
         return self._sandbox
 
 
+class ConfigError(ValueError):
+    """Raised when the Heimdal manifest is missing, unreadable, or malformed."""
+
+
 def load_config(manifest_path: str | None = None) -> Config:
-    """Load and resolve the Heimdal manifest."""
+    """Load and resolve the Heimdal manifest.
+
+    Surfaces a clear, actionable ConfigError instead of a raw traceback when
+    the manifest is missing, unparseable YAML, or not a mapping.
+    """
     path = _abspath(manifest_path or DEFAULT_MANIFEST)
-    with open(path, "r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+    except FileNotFoundError as exc:
+        raise ConfigError(
+            f"Heimdal manifest not found: {path}. Pass --manifest <file> or "
+            f"create config/heimdal.manifest.yml."
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(
+            f"Heimdal manifest at {path} is not valid YAML: {exc}"
+        ) from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"Heimdal manifest at {path} must be a mapping at the top level, "
+            f"got {type(raw).__name__}."
+        )
     return Config(_expand_env(raw), path)

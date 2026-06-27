@@ -35,9 +35,11 @@ host adapters.
       Keep both public, but have one delegate to the other so they can't
       drift. Add a test pinning the mapping. (Done: deployment_mode now
       delegates to recommend_profile via DEPLOYMENT_LABELS.)
-- [ ] Harden `config.load_config`: a malformed manifest or a missing schema
+- [x] Harden `config.load_config`: a malformed manifest or a missing schema
       file should fail with a clear, actionable message rather than a raw
-      traceback. Add a test.
+      traceback. Add a test. (Done: ConfigError for missing/malformed/
+      non-mapping manifest; load_schema raises a clear ValueError naming the
+      path.)
 - [ ] `heimdal models capabilities` on a machine with a stored matrix that
       has zero `model_capabilities` should print a clearer hint (currently
       prints the generic "run doctor" line even when Ollama is reachable).

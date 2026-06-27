@@ -95,9 +95,22 @@ def is_valid(instance: Any, schema: dict) -> bool:
 @lru_cache(maxsize=None)
 def load_schema(path: str) -> dict:
     """Load a schema file. Cached: schema files are immutable at runtime and
-    callers treat the result as read-only."""
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    callers treat the result as read-only.
+
+    A missing or malformed schema file raises a clear ValueError naming the
+    path rather than a bare FileNotFoundError/JSONDecodeError -- these are
+    install/packaging problems the operator needs to see plainly.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"Schema file not found: {path}. The Heimdal install may be "
+            f"incomplete (schemas/ missing)."
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Schema file {path} is not valid JSON: {exc}") from exc
 
 
 def validate_or_raise(instance: Any, schema_path: str, label: str, exc=ValueError) -> None:
