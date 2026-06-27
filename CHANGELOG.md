@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.6.3 — Brain role activated + loop hardening
+
+The brain/planner role -- assigned by the role-assigner since v0.6.1 but
+never invoked -- now runs at runtime. For **B3/B4 tasks only**, a planning
+step runs before the worker drafts and its short plan is prepended to the
+worker prompt. B0-B2 paths (and the entire eval suite, which is B1/B2) are
+untouched, so default behaviour is unchanged.
+
+- `model_router.route` resolves a `brain_model` for B3/B4 (a brain
+  candidate, or the worker model as fallback).
+- `quality_factory` runs the brain planning call, emits a `brain_plan`
+  trace event, and records the brain model in the run's `models_used`
+  (so it appears in the Repro Pack).
+- The offline backend mocks the planner deterministically
+  (`brain_task: "plan"`), so the B3/B4 path is exercisable in CI.
+
+This release also folds in a batch of autonomous-loop hardening on top of
+0.6.2 (no version bump for those): a real redaction gap fix
+(`Authorization: Bearer <token>` was not stripped), a mirror
+proposal-builder correctness fix (local-win dimensions were mis-flagged
+as teacher wins), `openclaw_result.schema.json` + validation,
+`heimdal mirror score`, `heimdal patch eval --targeted`, clearer
+manifest/schema error messages, `deployment_mode`/`recommend_profile`
+unification, and ~40 new tests (246 -> 288).
+
+
 ## v0.6.0 — v0.6.2 — Adaptive Runtime Core
 
 Three coordinated releases that let Heimdal understand the machine it

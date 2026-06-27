@@ -127,11 +127,23 @@ def route(
     else:
         semantic_verifier_model = None
 
+    # Brain/planner model for B3/B4: a dedicated planning step runs before the
+    # worker drafts. Resolve a brain candidate; fall back to the worker model
+    # when no brain candidate is installed so planning still happens.
+    if brain_profile:
+        try:
+            brain_model = _resolve_model("brain", installed, config)
+        except ModelUnavailableError:
+            brain_model = worker_model
+    else:
+        brain_model = None
+
     return {
         "quality_level": quality_level,
         "worker_profile": worker_profile,
         "worker_model": worker_model,
         "brain_profile": brain_profile,
+        "brain_model": brain_model,
         "verifier_backend": verifier_backend,
         "semantic_verifier_model": semantic_verifier_model,
         "verifier_strictness": behaviour["verifier_strictness"],

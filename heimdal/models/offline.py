@@ -69,6 +69,21 @@ def _mock_semantic_judgment(answer: str) -> str:
     return json.dumps(judgment)
 
 
+def _mock_plan(instruction: str) -> str:
+    """Deterministic stand-in for a brain/planner step.
+
+    Produces a short, generic 3-step plan anchored on the instruction. Like
+    the rest of the offline backend it is honest about being a stub: it does
+    not actually reason, it scaffolds.
+    """
+    objective = (instruction or "the task").strip().rstrip(".")
+    return "\n".join([
+        "1. Identify what the answer must cover for: " + objective + ".",
+        "2. Use only grounded/provided context; mark any gap rather than guessing.",
+        "3. Draft a concise, directly-on-task response and self-check it.",
+    ])
+
+
 class OfflineBackend(ModelBackend):
     name = "offline"
 
@@ -99,6 +114,16 @@ class OfflineBackend(ModelBackend):
                 model=OFFLINE_MODEL,
                 backend=self.name,
                 raw={"deterministic": True, "semantic_mock": True},
+            )
+
+        # Deterministic mock of a brain/planner step, so the B3/B4 planning
+        # path is exercisable offline (v0.6.x brain role).
+        if s.get("brain_task") == "plan":
+            return GenerationResult(
+                text=_mock_plan(s.get("instruction", "")),
+                model=OFFLINE_MODEL,
+                backend=self.name,
+                raw={"deterministic": True, "plan_mock": True},
             )
 
         instruction = (s.get("instruction") or prompt or "").strip()

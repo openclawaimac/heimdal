@@ -194,6 +194,29 @@ def run_quality_factory(
     max_output = contract.get("budget", {}).get("max_output_tokens", 2000)
     models_used: list[dict] = []
 
+    # Brain/planner step (B3/B4 only): a dedicated planning call runs before
+    # the worker drafts, and its plan is prepended to the worker prompt. For
+    # B0-B2, routing["brain_profile"] is None and this is skipped entirely, so
+    # default behaviour and the eval suite are unaffected.
+    if routing.get("brain_profile") and routing.get("brain_model"):
+        objective = contract.get("objective", "")
+        plan_result = backend.generate(
+            f"Produce a short numbered plan to address this task:\n{objective}\n",
+            model=routing["brain_model"],
+            system="You are a concise planner. Output 2-4 numbered steps only.",
+            max_tokens=300,
+            temperature=0.2,
+            structured={"brain_task": "plan", "instruction": objective},
+        )
+        plan_text = (plan_result.text or "").strip()
+        if plan_text:
+            base_prompt = f"# PLAN\n{plan_text}\n\n{base_prompt}"
+            trace.event("brain_plan", brain_model=plan_result.model)
+            models_used.append(
+                {"role": "brain", "model": plan_result.model,
+                 "backend": plan_result.backend}
+            )
+
     def draft(prompt: str, defects: list[dict]):
         result = backend.generate(
             _worker_prompt_with_defects(prompt, defects),
