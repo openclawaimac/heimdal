@@ -1286,9 +1286,35 @@ def cmd_logs(args) -> int:
         print("No runs logged yet.")
         return 0
     trace = Storage.read_json(trace_path)
+    metrics = trace.get("metrics", {}) or {}
+    if getattr(args, "json", False):
+        print(json.dumps(
+            {
+                "trace_id": trace.get("id"),
+                "task_id": trace.get("task_id"),
+                "status": trace.get("status"),
+                "metrics": metrics,
+                "trace_pack": trace_path,
+                "repro_pack": repro_path,
+            },
+            indent=2,
+            default=str,
+        ))
+        return 0
     print(f"Latest run: trace {trace['id']} (task {trace['task_id']})")
     print(f"  status : {trace.get('status')}")
-    print(f"  metrics: {json.dumps(trace.get('metrics', {}))}")
+    # Surface the v0.6.x runtime decision fields explicitly when present --
+    # they describe which profile + model assignment produced this run and
+    # would otherwise be buried in the metrics blob.
+    if metrics.get("runtime_profile"):
+        print(
+            f"  profile: {metrics['runtime_profile']} "
+            f"(source={metrics.get('profile_source', '?')})"
+        )
+    if metrics.get("assignment_source"):
+        print(f"  model  : {metrics.get('worker_model', '?')} "
+              f"(assignment={metrics['assignment_source']})")
+    print(f"  metrics: {json.dumps(metrics)}")
     print(f"  events : {len(trace.get('events', []))}")
     for event in trace.get("events", []):
         print(f"    - {event['ts']} {event['name']}")
@@ -1601,6 +1627,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_logs = sub.add_parser("logs", help="inspect run logs")
     p_logs.add_argument("logs_command", choices=["latest"])
+    p_logs.add_argument("--json", action="store_true", help="emit the latest run as JSON")
     p_logs.add_argument("--manifest", help="path to the Heimdal manifest")
     p_logs.set_defaults(func=cmd_logs)
     return parser

@@ -14,12 +14,13 @@ host adapters.
 
 ## Conservative / hardening
 
-- [ ] Refresh the stale module docstring in `heimdal/cli.py` (it stops at
+- [x] Refresh the stale module docstring in `heimdal/cli.py` (it stops at
       v0.5.0 — missing `models`, `profile`, `bridge submit/watch`, `mirror
       diff/proposals/promote-proposal`, `skill bootstrap`).
-- [ ] `heimdal logs latest` should surface the v0.6.x metrics
+- [x] `heimdal logs latest` should surface the v0.6.x metrics
       (`runtime_profile`, `profile_source`, `assignment_source`) when present.
-      Add a CLI test.
+      Add a CLI test. (Done: explicit profile/model lines + `--json` mode,
+      tests in tests/test_logs.py.)
 - [ ] Add tests for `heimdal/mirror/redaction.py` edge cases not yet covered
       (multiple secrets in one string, AWS key, bearer header) and for
       `manual_teacher.py` (file present vs absent → skipped).
