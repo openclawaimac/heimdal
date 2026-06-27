@@ -2,27 +2,29 @@
 
 Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
 
-    heimdal doctor [--json]
-    heimdal run demo
-    heimdal run --input <task.json>
-    heimdal run --instruction "..."
+    Adaptive runtime (v0.6.x):
+    heimdal doctor [--json] [--capability-test] [--all-models] [--write-profile] [--profile]
+    heimdal models {list, capabilities, assign [--write], roles, pin, unpin}
+    heimdal profile {show, detect, write, set <name>, explain [<name>]}
+
+    Tasks:
+    heimdal run demo | --input <task.json> | --instruction "..." [--role <id>]
     heimdal eval run
     heimdal verify --task <task.json> --answer <answer.json>
-    heimdal openclaw run --input <openclaw_payload.json>
-    heimdal openclaw capabilities [--json]
-    heimdal openclaw doctor --input <openclaw_payload.json>
-    heimdal hermes run --input <hermes_payload.json>
-    heimdal hermes capabilities [--json]
-    heimdal hermes doctor --input <hermes_payload.json>
-    heimdal bridge init | submit --input <job.json> | once | watch | status
-    heimdal dream run [--count N --source ... --offline --model ... --verifier ...]
-    heimdal dream report [--id <dream_run_id>]
-    heimdal dream list
-    heimdal mirror {run, list, report, show} [--teacher stub|manual|openai|anthropic ...]
-    heimdal patch validate <patch_file>
-    heimdal patch {list, show, review, eval, promote --to <ch>, reject --reason "..."}
-    heimdal skill {list, show, search, validate, install, archive, stats}
-    heimdal truth list | add <file> | search "<query>"
+
+    Host integrations:
+    heimdal openclaw {run --input <payload.json>, capabilities, doctor --input ...}
+    heimdal hermes {run --input <payload.json>, capabilities, doctor --input ...}
+    heimdal bridge {init, submit --input <job.json>, once, watch, status}
+
+    Self-improvement + teacher comparison (v0.4.x / v0.5.x):
+    heimdal dream {run [--count N --source ...], report [--id <id>], list}
+    heimdal patch {validate <file>, list, show, review, eval, promote --to <ch>, reject --reason "..."}
+    heimdal skill {list, show, search, validate, install, archive, stats, bootstrap}
+    heimdal mirror {run [--dry-run --teacher ...], list, report, show, diff, proposals, promote-proposal}
+
+    Local data + logs:
+    heimdal truth {list, add <file>, search "<query>"}
     heimdal logs latest
 """
 
