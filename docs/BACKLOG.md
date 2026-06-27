@@ -51,8 +51,13 @@ host adapters.
       coverage even though doctor now uses it. (build_matrix already had
       direct coverage in BuildMatrixTests + DoctorCLITests; the real gap was
       the doctor human-output branch, now tested.)
-- [ ] Run `/code-review` (or a manual review) over the v0.5.x mirror modules;
+- [x] Run `/code-review` (or a manual review) over the v0.5.x mirror modules;
       fix only genuine correctness bugs found, each with a regression test.
+      (Found + fixed: proposal_builder used a substring check `"teacher=" in
+      finding` to detect teacher wins, which also matched "vs teacher=" in
+      local-win findings — so dimensions where LOCAL won spawned "adopt the
+      teacher" proposals. Diff findings now carry an explicit `winner` field;
+      both call sites use it. Regression tests added.)
 
 ## Standard (backlog-driven features, in scope)
 

@@ -93,6 +93,10 @@ def compare(
         findings.append({
             "dimension": dim,
             "severity": _severity(delta),
+            # Explicit winner per dimension. Downstream code MUST use this,
+            # not string-match the finding text -- a local-win finding reads
+            # "local=X vs teacher=Y", which also contains "teacher=".
+            "winner": winner,
             "finding": (
                 f"teacher={teacher_scores[dim]} vs local={local_scores[dim]}"
                 if winner == "teacher_better"

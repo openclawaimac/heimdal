@@ -147,8 +147,10 @@ def build_proposals(diff: dict, *, case: dict) -> list[dict]:
 
     for finding in diff["findings"]:
         dim = finding["dimension"]
-        # Only act on teacher_better findings (severity in {medium, high}).
-        if "teacher=" not in finding["finding"]:
+        # Only act on dimensions the teacher genuinely won. Use the explicit
+        # winner field -- NOT a substring check on the finding text, which
+        # matches "vs teacher=" in local-win findings too.
+        if finding.get("winner") != "teacher_better":
             continue
         if finding.get("severity") == "low":
             continue
@@ -191,7 +193,7 @@ def build_proposals(diff: dict, *, case: dict) -> list[dict]:
     # source_grounding, also propose an eval case so the regression
     # stays locked in even after the rubric patch is reviewed.
     if requires_sources and any(
-        f["dimension"] == "source_grounding" and "teacher=" in f["finding"]
+        f["dimension"] == "source_grounding" and f.get("winner") == "teacher_better"
         for f in diff["findings"]
     ):
         case_id = case.get("case_id", "case")

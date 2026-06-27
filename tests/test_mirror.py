@@ -283,6 +283,38 @@ class DiffEngineTests(unittest.TestCase):
 
 
 class ProposalBuilderTests(unittest.TestCase):
+    def test_findings_carry_explicit_winner(self):
+        from heimdal.mirror import diff_engine
+        diff = diff_engine.compare(
+            case_id="w", local_output="Short.",
+            teacher_output="# T\n\n## Points\n- a\n- b\n## Caveat\nverify.",
+            task={"objective": "Explain a queue.", "constraints": {}},
+        )
+        for f in diff["findings"]:
+            self.assertIn(f["winner"], ("teacher_better", "local_better"))
+
+    def test_local_win_dimension_does_not_spawn_proposal(self):
+        # Regression: a teacher_better diff can still contain dimensions where
+        # LOCAL won. Those must never produce "adopt the teacher" proposals.
+        # (The old substring check on "teacher=" matched "vs teacher=" in
+        # local-win findings and mis-fired.)
+        from heimdal.mirror import proposal_builder
+        diff = {
+            "diff_id": "d", "case_id": "c", "teacher_better": True,
+            "local_better": False, "mixed": False, "teacher_hallucinated": False,
+            "findings": [
+                {"dimension": "conciseness", "severity": "high",
+                 "winner": "local_better",
+                 "finding": "local=0.9 vs teacher=0.2",
+                 "recommendation": "local was tighter"},
+            ],
+        }
+        proposals = proposal_builder.build_proposals(
+            diff, case={"case_id": "c", "task": {"role_id": "general"}},
+        )
+        # conciseness was a LOCAL win -> no proposal should come from it.
+        self.assertEqual(proposals, [])
+
     def test_no_proposals_when_teacher_hallucinated(self):
         from heimdal.mirror import diff_engine, proposal_builder
         diff = diff_engine.compare(
