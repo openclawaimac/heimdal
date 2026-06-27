@@ -164,6 +164,27 @@ class ModelsCLITests(unittest.TestCase):
         data = json.loads(buf.getvalue())
         self.assertIn("reachable", data)
 
+    def test_capabilities_hint_when_reachable_but_no_results(self):
+        # Stored matrix: Ollama reachable, models present, but no capability
+        # results -> the hint must name the models, not the generic line.
+        Storage(self.tmp).ensure().write_json(
+            "runtime/capability_matrix.json",
+            {
+                "ollama": {"reachable": True, "base_url": "http://localhost:11434",
+                           "models": ["qwen2.5:7b"]},
+                "model_capabilities": {},
+                "recommended_runtime_profile": "single_gpu",
+                "warnings": [],
+            },
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["models", "capabilities", "--manifest", self.manifest])
+        self.assertEqual(code, 0)
+        out = buf.getvalue()
+        self.assertIn("reachable", out)
+        self.assertIn("qwen2.5:7b", out)
+
     def test_models_assign_write_produces_artifact(self):
         code = main([
             "models", "assign", "--write", "--manifest", self.manifest,

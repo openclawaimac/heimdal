@@ -40,9 +40,11 @@ host adapters.
       traceback. Add a test. (Done: ConfigError for missing/malformed/
       non-mapping manifest; load_schema raises a clear ValueError naming the
       path.)
-- [ ] `heimdal models capabilities` on a machine with a stored matrix that
+- [x] `heimdal models capabilities` on a machine with a stored matrix that
       has zero `model_capabilities` should print a clearer hint (currently
       prints the generic "run doctor" line even when Ollama is reachable).
+      (Done: hint now branches on unreachable / no-models / reachable-with-
+      models and names the models in the last case.)
 - [ ] Audit `tests/test_doctor.py`: it still calls the legacy
       `full_profile()`. Add a parallel test that exercises the v0.6.0
       `capability_matrix.build_matrix()` path so the new path has direct

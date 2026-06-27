@@ -625,10 +625,26 @@ def cmd_models(args) -> int:
             print(json.dumps(caps, indent=2))
         else:
             if not caps:
-                print(
-                    "No per-model capability results yet. Run "
-                    "`heimdal doctor --capability-test --write-profile` first."
-                )
+                ollama = matrix.get("ollama", {}) or {}
+                if not ollama.get("reachable"):
+                    print(
+                        "No per-model capability results: Ollama is not "
+                        "reachable. Start Ollama, then run "
+                        "`heimdal doctor --capability-test --write-profile`."
+                    )
+                elif not ollama.get("models"):
+                    print(
+                        "Ollama is reachable but has no models installed. "
+                        "Pull one (e.g. `ollama pull qwen2.5:7b`), then run "
+                        "`heimdal doctor --capability-test --write-profile`."
+                    )
+                else:
+                    print(
+                        "Ollama is reachable with models installed, but the "
+                        "stored matrix has no capability results yet. Run "
+                        "`heimdal doctor --capability-test --write-profile` "
+                        "to test: " + ", ".join(ollama["models"])
+                    )
                 return 0
             for model, entry in caps.items():
                 if entry.get("skipped"):
