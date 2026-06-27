@@ -782,9 +782,67 @@ def cmd_dream(args) -> int:
 
 
 # -- mirror ----------------------------------------------------------------
+def _read_answer_file(path: str) -> str:
+    """Read a local/teacher answer file: raw text, or JSON with an 'answer'."""
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = fh.read()
+    try:
+        return _answer_text(json.loads(raw))
+    except (ValueError, TypeError):
+        return raw
+
+
+def _mirror_task(task_doc) -> dict:
+    """Normalize a task file into the {objective, constraints, role_id} shape
+    the diff engine expects -- accepts a Host Task Envelope or a flat dict."""
+    if isinstance(task_doc, dict) and "task_request" in task_doc:
+        tr = task_doc.get("task_request", {}) or {}
+        rb = task_doc.get("role_binding", {}) or {}
+        return {
+            "objective": tr.get("instruction", ""),
+            "title": tr.get("title", ""),
+            "constraints": tr.get("constraints", {}) or {},
+            "role_id": rb.get("role_id", "general"),
+        }
+    if isinstance(task_doc, dict):
+        return {
+            "objective": task_doc.get("objective", ""),
+            "title": task_doc.get("title", ""),
+            "constraints": task_doc.get("constraints", {}) or {},
+            "role_id": task_doc.get("role_id", "general"),
+        }
+    return {"objective": str(task_doc), "constraints": {}, "role_id": "general"}
+
+
 def cmd_mirror(args) -> int:
     config = load_config(args.manifest)
     command = args.mirror_command
+
+    if command == "score":
+        from heimdal.mirror import diff_engine
+        if not (args.local_file and args.teacher_file and args.task):
+            print("error: 'mirror score' requires <local_file> <teacher_file> "
+                  "--task <task_file>", file=sys.stderr)
+            return 2
+        task = _mirror_task(Storage.read_json(args.task))
+        diff = diff_engine.compare(
+            case_id="mirror-score",
+            local_output=_read_answer_file(args.local_file),
+            teacher_output=_read_answer_file(args.teacher_file),
+            task=task,
+        )
+        if args.json:
+            print(json.dumps(diff, indent=2, default=str))
+        else:
+            verdict = (
+                "teacher_better" if diff["teacher_better"]
+                else "local_better" if diff["local_better"] else "mixed"
+            )
+            print(f"verdict           : {verdict}")
+            print(f"teacher_hallucinated: {diff['teacher_hallucinated']}")
+            for f in diff["findings"]:
+                print(f"  {f['winner']:<14} {f['dimension']:<20} {f['finding']}")
+        return 0
 
     if command == "run":
         run = mirror_runner.run_mirror(
@@ -1470,7 +1528,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_mirror.add_argument(
         "mirror_command",
         choices=["run", "list", "report", "show", "diff", "proposals",
-                 "promote-proposal"],
+                 "promote-proposal", "score"],
+    )
+    p_mirror.add_argument(
+        "local_file", nargs="?",
+        help="local answer file (for 'score')",
+    )
+    p_mirror.add_argument(
+        "teacher_file", nargs="?",
+        help="teacher answer file (for 'score')",
+    )
+    p_mirror.add_argument(
+        "--task", help="task file (Host Task Envelope or {objective,...}) for 'score'",
     )
     p_mirror.add_argument(
         "--source", choices=list(mirror_runner.SOURCES),

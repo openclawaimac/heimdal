@@ -186,6 +186,49 @@ class MirrorRunnerTests(unittest.TestCase):
         self.assertNotIn("ANTHROPIC_API_KEY", blob)
 
 
+class MirrorScoreCLITests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.manifest = write_temp_manifest(self.tmp, self.tmp)
+
+    def _write(self, name: str, content) -> str:
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            if isinstance(content, str):
+                fh.write(content)
+            else:
+                json.dump(content, fh)
+        return path
+
+    def test_score_runs_diff_on_two_files(self):
+        local = self._write("local.md", "Short answer.")
+        teacher = self._write(
+            "teacher.md",
+            "# Queue\n\n## Points\n- FIFO.\n- Scheduling.\n## Caveat\nverify.",
+        )
+        task = self._write("task.json", {"objective": "Explain a queue.",
+                                         "constraints": {}})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main([
+                "mirror", "score", local, teacher, "--task", task,
+                "--json", "--manifest", self.manifest,
+            ])
+        self.assertEqual(code, 0)
+        diff = json.loads(buf.getvalue())
+        self.assertIn("teacher_better", diff)
+        self.assertIn("findings", diff)
+        # No mirror run was created -- score is a direct file comparison.
+        self.assertFalse(os.path.isdir(os.path.join(self.tmp, "mirror", "runs"))
+                         and os.listdir(os.path.join(self.tmp, "mirror", "runs")))
+
+    def test_score_requires_all_three_inputs(self):
+        local = self._write("local.md", "x")
+        self.assertEqual(
+            main(["mirror", "score", local, "--manifest", self.manifest]), 2
+        )
+
+
 class MirrorCLITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

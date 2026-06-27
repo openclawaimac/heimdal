@@ -66,9 +66,11 @@ host adapters.
       it in `openclaw_host.handle`. Add tests. (Done: schema mirrors Hermes
       with outcome/summary + no verifier block; ref pattern `^(?!/)` forbids
       absolute paths while tolerating empty refs; validated in handle.)
-- [ ] `heimdal mirror score <local_file> <teacher_file> --task <task_file>`
+- [x] `heimdal mirror score <local_file> <teacher_file> --task <task_file>`
       (the optional v0.5.1 CLI) — run the diff engine on two files directly
-      without a full mirror run. Add a test.
+      without a full mirror run. Add a test. (Done: reads raw-text or
+      {answer:...} files, normalizes a Host Task Envelope or flat task dict,
+      prints/JSONs the diff; no mirror run created.)
 - [ ] `heimdal dream report --latest` convenience alias (today you must pass
       `--id`); make `report` with no id load the most recent. Add a test.
 - [ ] Surface selected-skill refs in `heimdal logs latest` (they are already
