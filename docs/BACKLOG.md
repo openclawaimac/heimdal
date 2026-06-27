@@ -61,9 +61,11 @@ host adapters.
 
 ## Standard (backlog-driven features, in scope)
 
-- [ ] Add `schemas/openclaw_result.schema.json` for symmetry with
+- [x] Add `schemas/openclaw_result.schema.json` for symmetry with
       `hermes_result.schema.json`, and validate the OpenClaw result against
-      it in `openclaw_host.handle`. Add tests.
+      it in `openclaw_host.handle`. Add tests. (Done: schema mirrors Hermes
+      with outcome/summary + no verifier block; ref pattern `^(?!/)` forbids
+      absolute paths while tolerating empty refs; validated in handle.)
 - [ ] `heimdal mirror score <local_file> <teacher_file> --task <task_file>`
       (the optional v0.5.1 CLI) — run the diff engine on two files directly
       without a full mirror run. Add a test.

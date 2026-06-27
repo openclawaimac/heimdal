@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Heimdal OpenClaw Result",
+  "description": "The OpenClaw-style result Heimdal returns to an OpenClaw host. Symmetric with the Hermes result: no raw prompts, no full Context Packet, no internal sub-agent graph, only host-safe relative references. OpenClaw uses `outcome`/`summary` where Hermes uses `status`/`message`, and carries no verifier block.",
+  "type": "object",
+  "required": [
+    "openclaw_task_id",
+    "heimdal_task_id",
+    "outcome",
+    "code",
+    "summary",
+    "questions",
+    "needed_inputs",
+    "answer",
+    "artifacts",
+    "repro_pack_ref",
+    "trace_pack_ref",
+    "metrics",
+    "callback_delivery"
+  ],
+  "properties": {
+    "openclaw_task_id": {
+      "type": "string"
+    },
+    "heimdal_task_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "need_input"
+      ]
+    },
+    "code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "needed_inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "reason"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "missing_topic": {
+            "type": "string"
+          },
+          "suggested_action": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "answer": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "ref"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^(?!/)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "repro_pack_ref": {
+      "type": "string",
+      "pattern": "^(?!/)"
+    },
+    "trace_pack_ref": {
+      "type": "string",
+      "pattern": "^(?!/)"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "callback_delivery": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failed"
+          ]
+        },
+        "target_ref": {
+          "type": "string",
+          "pattern": "^(?!/)"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

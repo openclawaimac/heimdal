@@ -43,6 +43,34 @@ class OpenClawHandleTests(unittest.TestCase):
     def _runtime(self) -> Runtime:
         return Runtime(temp_config(tempfile.mkdtemp()), prefer_backend="offline")
 
+    def test_result_validates_against_openclaw_schema(self):
+        # handle() now validates its output against openclaw_result.schema.json
+        # (symmetry with the Hermes path). A clean run must round-trip valid.
+        from heimdal import jsonschema_min
+        result = handle(_payload("Explain what a queue is."), self._runtime())
+        errors = jsonschema_min.validate(
+            result,
+            jsonschema_min.load_schema(
+                repo_path("schemas/openclaw_result.schema.json")
+            ),
+        )
+        self.assertEqual(errors, [])
+        # No internal leakage in the host-visible result.
+        for internal in ("prompt", "routing", "packet", "context_packet"):
+            self.assertNotIn(internal, result)
+
+    def test_schema_rejects_absolute_pack_ref(self):
+        # The host-safety guarantee: an absolute path in a ref must fail the
+        # schema (pattern forbids a leading slash).
+        from heimdal import jsonschema_min
+        schema = jsonschema_min.load_schema(
+            repo_path("schemas/openclaw_result.schema.json")
+        )
+        result = handle(_payload("Explain what a queue is."), self._runtime())
+        result["repro_pack_ref"] = "/home/user/heimdal/storage/logs/x.json"
+        errors = jsonschema_min.validate(result, schema)
+        self.assertTrue(errors)
+
     def test_passing_task_round_trips(self):
         result = handle(_payload("Explain what a queue is."), self._runtime())
         self.assertEqual(result["openclaw_task_id"], "oc-1")

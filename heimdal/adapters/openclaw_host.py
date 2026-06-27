@@ -12,6 +12,7 @@ back, and delivers the result to a file callback when one is requested
 
 from __future__ import annotations
 
+from heimdal import jsonschema_min
 from heimdal.adapters.host_support import deliver_callback, read_answer
 from heimdal.adapters.openclaw_adapter import OpenClawAdapter
 from heimdal.core import repro_trace
@@ -52,4 +53,9 @@ def handle(
         repro_trace.append_trace_events(
             runtime.storage, runtime.config, trace_path, callback_events
         )
+    jsonschema_min.validate_or_raise(
+        oc_result,
+        runtime.config.schema_path("openclaw_result.schema.json"),
+        "OpenClaw Result",
+    )
     return oc_result
