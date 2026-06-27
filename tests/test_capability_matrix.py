@@ -82,6 +82,28 @@ class BuildMatrixTests(unittest.TestCase):
         self.assertTrue(result.get("skipped"))
 
 
+class DeploymentModeDelegationTests(unittest.TestCase):
+    """deployment_mode must stay consistent with recommend_profile -- they
+    share the same count thresholds via DEPLOYMENT_LABELS."""
+
+    def test_deployment_mode_matches_recommend_profile_for_counts(self):
+        from heimdal.hardware.capability_matrix import DEPLOYMENT_LABELS
+        from heimdal.hardware.profiler import deployment_mode
+        for count in (0, 1, 2, 3, 4, 8):
+            profile = capability_matrix.recommend_profile(
+                {"gpu": {"count": count, "metal": False},
+                 "os": {"flavour": "linux_native"}}
+            )
+            self.assertEqual(deployment_mode(count), DEPLOYMENT_LABELS[profile])
+
+    def test_legacy_labels_preserved(self):
+        from heimdal.hardware.profiler import deployment_mode
+        self.assertEqual(deployment_mode(0), "Dev")
+        self.assertEqual(deployment_mode(1), "Single Device")
+        self.assertEqual(deployment_mode(2), "Pipeline")
+        self.assertEqual(deployment_mode(8), "Factory")
+
+
 class DoctorCLITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

@@ -29,11 +29,12 @@ host adapters.
 - [x] Add a test asserting `heimdal/mirror/cloud_teacher.py` raises
       `CloudProviderUnavailable` (not a bare ImportError/KeyError) when the
       SDK or API key is missing — without importing any real SDK.
-- [ ] Unify the two hardware-class systems: `profiler.deployment_mode()`
+- [x] Unify the two hardware-class systems: `profiler.deployment_mode()`
       (Dev/Single Device/Pipeline/Factory) vs
       `capability_matrix.recommend_profile()` (cpu_only/dev/single_gpu/…).
       Keep both public, but have one delegate to the other so they can't
-      drift. Add a test pinning the mapping.
+      drift. Add a test pinning the mapping. (Done: deployment_mode now
+      delegates to recommend_profile via DEPLOYMENT_LABELS.)
 - [ ] Harden `config.load_config`: a malformed manifest or a missing schema
       file should fail with a clear, actionable message rather than a raw
       traceback. Add a test.

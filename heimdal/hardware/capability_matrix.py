@@ -27,6 +27,18 @@ from heimdal.models.ollama import OllamaBackend
 # v0.6.2 layers per-profile budgets on top of them.
 PROFILES = ("cpu_only", "dev", "single_gpu", "pipeline", "factory")
 
+# Canonical map from runtime-profile name to the legacy deployment-mode
+# display label (profiler.deployment_mode). Keeping this here -- next to
+# recommend_profile, the single source of truth for the hardware->tier
+# decision -- is what stops the two classification systems from drifting.
+DEPLOYMENT_LABELS = {
+    "cpu_only": "Dev",
+    "dev": "Dev",
+    "single_gpu": "Single Device",
+    "pipeline": "Pipeline",
+    "factory": "Factory",
+}
+
 
 def recommend_profile(hardware: dict) -> str:
     """Pick a runtime profile from the hardware snapshot.

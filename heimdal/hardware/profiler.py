@@ -164,13 +164,22 @@ def _safe_int(text: str) -> int:
 
 
 def deployment_mode(gpu_count: int) -> str:
-    if gpu_count == 0:
-        return "Dev"
-    if gpu_count == 1:
-        return "Single Device"
-    if gpu_count <= 3:
-        return "Pipeline"
-    return "Factory"
+    """Legacy display label for a GPU count (Dev / Single Device / ...).
+
+    Delegates to capability_matrix.recommend_profile so the count thresholds
+    live in exactly one place and the two classification systems can't drift.
+    Imported lazily because capability_matrix imports this module at load.
+    """
+    from heimdal.hardware.capability_matrix import (
+        DEPLOYMENT_LABELS,
+        recommend_profile,
+    )
+
+    profile = recommend_profile(
+        {"gpu": {"count": gpu_count, "metal": False},
+         "os": {"flavour": "linux_native"}}
+    )
+    return DEPLOYMENT_LABELS[profile]
 
 
 def detect_ollama(config) -> dict:
