@@ -139,6 +139,17 @@ class DoctorCLITests(unittest.TestCase):
                     "recommended_runtime_profile", "model_capabilities"):
             self.assertIn(key, matrix)
 
+    def test_doctor_human_output_runs_and_shows_profile(self):
+        # The default (non-JSON) doctor branch had no test; it builds the
+        # matrix via build_matrix and prints a human summary.
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["doctor", "--manifest", self.manifest])
+        self.assertEqual(code, 0)
+        out = buf.getvalue()
+        self.assertIn("Heimdal doctor", out)
+        self.assertIn("profile", out)
+
 
 if __name__ == "__main__":
     unittest.main()

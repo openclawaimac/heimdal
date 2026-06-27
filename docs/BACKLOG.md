@@ -45,10 +45,12 @@ host adapters.
       prints the generic "run doctor" line even when Ollama is reachable).
       (Done: hint now branches on unreachable / no-models / reachable-with-
       models and names the models in the last case.)
-- [ ] Audit `tests/test_doctor.py`: it still calls the legacy
+- [x] Audit `tests/test_doctor.py`: it still calls the legacy
       `full_profile()`. Add a parallel test that exercises the v0.6.0
       `capability_matrix.build_matrix()` path so the new path has direct
-      coverage even though doctor now uses it.
+      coverage even though doctor now uses it. (build_matrix already had
+      direct coverage in BuildMatrixTests + DoctorCLITests; the real gap was
+      the doctor human-output branch, now tested.)
 - [ ] Run `/code-review` (or a manual review) over the v0.5.x mirror modules;
       fix only genuine correctness bugs found, each with a regression test.
 
