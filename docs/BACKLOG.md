@@ -75,8 +75,10 @@ host adapters.
       `--id`); make `report` with no id load the most recent. Add a test.
       (report with no id already loaded the latest; added `--id latest` alias
       for symmetry with mirror, plus a test covering both.)
-- [ ] Surface selected-skill refs in `heimdal logs latest` (they are already
-      in the repro pack as `selected_skills`). Add a test.
+- [x] Surface selected-skill refs in `heimdal logs latest` (they are already
+      in the repro pack as `selected_skills`). Add a test. (Done: logs reads
+      the repro pack's selected_skills, surfaces a `skills:` line + a
+      selected_skills field in --json.)
 - [ ] `heimdal patch eval` should accept `--targeted` to run only the eval
       categories relevant to the patch type (e.g. retrieval_patch → no_guess
       + must_pass), keeping full-suite as the default. Add a test.

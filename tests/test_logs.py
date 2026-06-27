@@ -51,6 +51,32 @@ class LogsLatestTests(unittest.TestCase):
         for key in ("runtime_profile", "profile_source"):
             self.assertIn(key, metrics)
 
+    def test_json_output_includes_selected_skills(self):
+        # A research task selects skills; logs latest must surface their refs
+        # (read from the repro pack's selected_skills).
+        runtime = Runtime(temp_config(self.tmp), prefer_backend="offline")
+        runtime.run_envelope({
+            "host": {"type": "cli", "host_task_id": "log-skill",
+                     "source_agent": None, "callback": {}},
+            "role_binding": {"role_id": "research", "risk_mode": "balanced",
+                             "privacy_mode": "local_only",
+                             "output_profiles": ["markdown"]},
+            "task_request": {"task_id": "log-skill", "title": "Sum",
+                             "instruction": "Using local sources, summarize Heimdal modes.",
+                             "inputs": {}, "constraints": {}, "priority": "P2",
+                             "budget": {"quality_level": "B2"},
+                             "expected_outputs": ["markdown_response"]},
+            "runtime_hints": {},
+        })
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(
+                main(["logs", "latest", "--json", "--manifest", self.manifest]), 0
+            )
+        latest = json.loads(buf.getvalue())
+        self.assertIn("selected_skills", latest)
+        self.assertTrue(latest["selected_skills"])
+
     def test_human_output_surfaces_profile_line(self):
         _seed_run(self.tmp)
         buf = io.StringIO()

@@ -1361,6 +1361,14 @@ def cmd_logs(args) -> int:
         return 0
     trace = Storage.read_json(trace_path)
     metrics = trace.get("metrics", {}) or {}
+    # Selected-skill refs live in the repro pack (selected_skills), not the
+    # trace. Read them defensively so logs surfaces which skills shaped the run.
+    selected_skills = []
+    if repro_path:
+        try:
+            selected_skills = Storage.read_json(repro_path).get("selected_skills", []) or []
+        except (OSError, ValueError):
+            selected_skills = []
     if getattr(args, "json", False):
         print(json.dumps(
             {
@@ -1368,6 +1376,7 @@ def cmd_logs(args) -> int:
                 "task_id": trace.get("task_id"),
                 "status": trace.get("status"),
                 "metrics": metrics,
+                "selected_skills": selected_skills,
                 "trace_pack": trace_path,
                 "repro_pack": repro_path,
             },
@@ -1388,6 +1397,9 @@ def cmd_logs(args) -> int:
     if metrics.get("assignment_source"):
         print(f"  model  : {metrics.get('worker_model', '?')} "
               f"(assignment={metrics['assignment_source']})")
+    if selected_skills:
+        ids = ", ".join(s.get("skill_id", "?") for s in selected_skills)
+        print(f"  skills : {ids}")
     print(f"  metrics: {json.dumps(metrics)}")
     print(f"  events : {len(trace.get('events', []))}")
     for event in trace.get("events", []):
