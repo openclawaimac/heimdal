@@ -71,8 +71,10 @@ host adapters.
       without a full mirror run. Add a test. (Done: reads raw-text or
       {answer:...} files, normalizes a Host Task Envelope or flat task dict,
       prints/JSONs the diff; no mirror run created.)
-- [ ] `heimdal dream report --latest` convenience alias (today you must pass
+- [x] `heimdal dream report --latest` convenience alias (today you must pass
       `--id`); make `report` with no id load the most recent. Add a test.
+      (report with no id already loaded the latest; added `--id latest` alias
+      for symmetry with mirror, plus a test covering both.)
 - [ ] Surface selected-skill refs in `heimdal logs latest` (they are already
       in the repro pack as `selected_skills`). Add a test.
 - [ ] `heimdal patch eval` should accept `--targeted` to run only the eval

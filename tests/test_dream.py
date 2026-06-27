@@ -211,6 +211,23 @@ class DreamCLITests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.manifest = write_temp_manifest(self.tmp, self.tmp)
 
+    def test_dream_report_no_id_and_latest_alias_load_most_recent(self):
+        # Two runs; both `report` (no id) and `report --id latest` must return
+        # the second (most recent) report.
+        ids = []
+        for _ in range(2):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main(["dream", "run", "--json", "--manifest", self.manifest])
+            ids.append(json.loads(buf.getvalue())["dream_run_id"])
+        for extra in ([], ["--id", "latest"]):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = main(["dream", "report", "--json", "--manifest",
+                             self.manifest] + extra)
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(buf.getvalue())["dream_run_id"], ids[-1])
+
     def test_dream_run_then_list_then_report(self):
         run_buf = io.StringIO()
         with contextlib.redirect_stdout(run_buf):

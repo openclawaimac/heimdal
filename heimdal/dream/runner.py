@@ -181,12 +181,16 @@ def list_dream_runs(config: Config | None = None) -> list[dict]:
 
 
 def load_dream_report(config: Config, dream_run_id: str | None = None) -> dict:
-    """Load a specific report by id, or the most recent one."""
+    """Load a specific report by id, or the most recent one.
+
+    ``dream_run_id`` of None or the literal ``"latest"`` both load the most
+    recent report (the "latest" alias matches the mirror CLI convention).
+    """
     storage = _ensure_storage(config)
     reports_dir = storage.path("dream/reports")
     if not os.path.isdir(reports_dir):
         raise FileNotFoundError("No dream reports written yet.")
-    if dream_run_id:
+    if dream_run_id and dream_run_id != "latest":
         path = os.path.join(reports_dir, f"{dream_run_id}_report.json")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Dream report not found: {dream_run_id}")
