@@ -31,7 +31,14 @@ _PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b")),
     ("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
-    ("bearer_header", re.compile(r"(?i)\b(?:authorization|bearer)[:=]\s*[A-Za-z0-9._\-]{16,}")),
+    # Catches "Authorization: Bearer <token>", "Authorization=<token>", and a
+    # bare "Bearer <token>". The "Bearer" keyword may sit between the header
+    # name and the token, so it has to be optional after authorization and
+    # also stand alone.
+    ("bearer_header", re.compile(
+        r"(?i)\b(?:authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)"
+        r"[A-Za-z0-9._\-]{16,}"
+    )),
     (
         "env_secret_assignment",
         re.compile(

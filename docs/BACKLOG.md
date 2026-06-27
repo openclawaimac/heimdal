@@ -21,10 +21,12 @@ host adapters.
       (`runtime_profile`, `profile_source`, `assignment_source`) when present.
       Add a CLI test. (Done: explicit profile/model lines + `--json` mode,
       tests in tests/test_logs.py.)
-- [ ] Add tests for `heimdal/mirror/redaction.py` edge cases not yet covered
+- [x] Add tests for `heimdal/mirror/redaction.py` edge cases not yet covered
       (multiple secrets in one string, AWS key, bearer header) and for
-      `manual_teacher.py` (file present vs absent → skipped).
-- [ ] Add a test asserting `heimdal/mirror/cloud_teacher.py` raises
+      `manual_teacher.py` (file present vs absent → skipped). (Done — and the
+      bearer-header test surfaced a real gap: `Authorization: Bearer <token>`
+      was not redacted; regex fixed.)
+- [x] Add a test asserting `heimdal/mirror/cloud_teacher.py` raises
       `CloudProviderUnavailable` (not a bare ImportError/KeyError) when the
       SDK or API key is missing — without importing any real SDK.
 - [ ] Unify the two hardware-class systems: `profiler.deployment_mode()`
