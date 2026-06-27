@@ -51,6 +51,9 @@ host adapters.
       coverage even though doctor now uses it. (build_matrix already had
       direct coverage in BuildMatrixTests + DoctorCLITests; the real gap was
       the doctor human-output branch, now tested.)
+- [x] (loop extra) Direct unit tests for the 14-dimension scoring engine
+      (`heimdal/mirror/scoring.py`) — it only had indirect coverage via the
+      diff tests. tests/test_mirror_scoring.py pins each heuristic.
 - [x] Run `/code-review` (or a manual review) over the v0.5.x mirror modules;
       fix only genuine correctness bugs found, each with a regression test.
       (Found + fixed: proposal_builder used a substring check `"teacher=" in
