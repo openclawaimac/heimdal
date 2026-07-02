@@ -6,10 +6,13 @@ that smaller local models can produce frontier-like agent outcomes through
 architecture — context discipline, retrieval, verification, evals, patching, and
 hardware-adaptive runtime profiles — rather than raw model size.
 
-Multi-GPU machines: Heimdal **detects** multiple GPUs and **profiles** for them
-(`pipeline` / `factory` runtime profiles get bigger context + quality budgets),
-but the inference loop is still serial against one Ollama endpoint. Concurrent
-per-role / per-GPU execution is on the roadmap (v0.7.x), not shipped.
+Multi-GPU machines (v0.7.0): pin one Ollama instance per GPU and map Heimdal's
+roles to them via `ollama.endpoints` in the manifest — worker drafts, the
+semantic verifier, and the brain planner then run on separate devices, and
+B3/B4 multi-sample drafting runs concurrently across worker endpoints
+(`heimdal endpoints list|status`). This is role-level routing, not tensor
+parallelism: splitting one model across GPUs remains Ollama/llama.cpp's job.
+With no endpoints configured, everything runs on the single default endpoint.
 
 The full specification lives in [`docs/builder_pack/`](docs/builder_pack/);
 start with `docs/builder_pack/INDEX.md`.

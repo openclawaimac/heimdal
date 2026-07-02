@@ -95,9 +95,33 @@ def run_quality_factory(
     trace,
     model_override=None,
     verifier_override=None,
+    backend_pool=None,
 ) -> dict:
-    """Execute the Quality Factory pipeline for one Work Mode task."""
+    """Execute the Quality Factory pipeline for one Work Mode task.
+
+    ``backend_pool`` (v0.7.0, optional) routes roles to separate Ollama
+    endpoints on multi-GPU machines and enables concurrent B3/B4 sample
+    drafting. When absent, every role uses ``backend`` serially -- the
+    pre-v0.7.0 behavior.
+    """
     trace.event("contract_ready", contract_id=contract["contract_id"])
+
+    # Per-role backends. Without a pool everything resolves to `backend`.
+    worker_backends = backend_pool.worker_backends() if backend_pool else [backend]
+    verifier_backend_inst = (
+        backend_pool.backend_for_role("semantic_verifier") if backend_pool else backend
+    )
+    brain_backend_inst = (
+        backend_pool.backend_for_role("brain") if backend_pool else backend
+    )
+    routed_backends = list(
+        {id(b): b for b in
+         [*worker_backends, verifier_backend_inst, brain_backend_inst]}.values()
+    )
+    if backend_pool is not None:
+        routing_map = backend_pool.routing_map()
+        if any(name != "default" for name in routing_map.values()):
+            trace.event("endpoint_routing", **routing_map)
 
     packet = context_os.build_packet(contract, role, envelope, storage, config)
     selected_skills_refs = [
@@ -200,7 +224,7 @@ def run_quality_factory(
     # default behaviour and the eval suite are unaffected.
     if routing.get("brain_profile") and routing.get("brain_model"):
         objective = contract.get("objective", "")
-        plan_result = backend.generate(
+        plan_result = brain_backend_inst.generate(
             f"Produce a short numbered plan to address this task:\n{objective}\n",
             model=routing["brain_model"],
             system="You are a concise planner. Output 2-4 numbered steps only.",
@@ -217,8 +241,10 @@ def run_quality_factory(
                  "backend": plan_result.backend}
             )
 
-    def draft(prompt: str, defects: list[dict]):
-        result = backend.generate(
+    def _generate_draft(prompt: str, defects: list[dict], use_backend):
+        """One worker generation on a specific backend (thread-safe: no
+        shared-state writes; callers append to models_used afterwards)."""
+        return use_backend.generate(
             _worker_prompt_with_defects(prompt, defects),
             model=routing["worker_model"],
             system=role.get("system_context", ""),
@@ -227,13 +253,18 @@ def run_quality_factory(
             temperature=0.2,
             structured={**structured, "defects": defects},
         )
+
+    def draft(prompt: str, defects: list[dict]):
+        result = _generate_draft(prompt, defects, worker_backends[0])
         models_used.append(
             {"role": "worker", "model": result.model, "backend": result.backend}
         )
         return result
 
     def check(text: str, **trace_kw):
-        result = verifier.verify(text, contract, packet, routing, config, backend)
+        result = verifier.verify(
+            text, contract, packet, routing, config, verifier_backend_inst
+        )
         semantic = result.get("semantic")
         if semantic is not None:
             trace.event(
@@ -246,22 +277,67 @@ def run_quality_factory(
         trace.event("verify", status=result["status"], score=result["score"], **trace_kw)
         return result
 
-    # Route the backend's request events into this run's Trace Pack.
-    backend.event_sink = trace.event
+    # Route every routed backend's request events into this run's Trace Pack.
+    for routed in routed_backends:
+        routed.event_sink = trace.event
     try:
         # Initial draft; high budgets (B3/B4) take the best of multiple samples.
         best_text = ""
         best_verification = None
-        for sample in range(routing["samples"]):
-            result = draft(base_prompt, [])
+        parallel = (
+            routing["samples"] > 1
+            and backend_pool is not None
+            and backend_pool.parallel_samples_enabled(config)
+        )
+        if parallel:
+            # v0.7.0: draft all samples concurrently, spread round-robin over
+            # the worker endpoints, then verify in order and stop at the first
+            # PASS. Trades tokens (all samples always generated) for
+            # wall-clock latency -- the factory/pipeline profile bargain.
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=routing["samples"]) as executor:
+                futures = [
+                    executor.submit(
+                        _generate_draft, base_prompt, [],
+                        worker_backends[index % len(worker_backends)],
+                    )
+                    for index in range(routing["samples"])
+                ]
+                sample_results = [future.result() for future in futures]
             trace.event(
-                "worker_draft", sample=sample, model=result.model, latency_ms=result.latency_ms
+                "parallel_samples",
+                count=len(sample_results),
+                worker_endpoints=len(worker_backends),
             )
-            candidate = check(result.text, sample=sample)
-            if best_verification is None or candidate["score"] > best_verification["score"]:
-                best_text, best_verification = result.text, candidate
-            if candidate["status"] == PASS:
-                break
+            for sample, result in enumerate(sample_results):
+                models_used.append(
+                    {"role": "worker", "model": result.model,
+                     "backend": result.backend}
+                )
+                trace.event(
+                    "worker_draft", sample=sample, model=result.model,
+                    latency_ms=result.latency_ms, parallel=True,
+                )
+                candidate = check(result.text, sample=sample)
+                if (best_verification is None
+                        or candidate["score"] > best_verification["score"]):
+                    best_text, best_verification = result.text, candidate
+                if candidate["status"] == PASS:
+                    break
+        else:
+            for sample in range(routing["samples"]):
+                result = draft(base_prompt, [])
+                trace.event(
+                    "worker_draft", sample=sample, model=result.model,
+                    latency_ms=result.latency_ms,
+                )
+                candidate = check(result.text, sample=sample)
+                if (best_verification is None
+                        or candidate["score"] > best_verification["score"]):
+                    best_text, best_verification = result.text, candidate
+                if candidate["status"] == PASS:
+                    break
 
         repair_iterations = 0
         while (
@@ -277,14 +353,15 @@ def run_quality_factory(
             if repaired["status"] == PASS:
                 break
     finally:
-        backend.event_sink = None
+        for routed in routed_backends:
+            routed.event_sink = None
 
     if routing["verifier_backend"] == HYBRID:
         models_used.append(
             {
                 "role": "semantic_verifier",
                 "model": routing["semantic_verifier_model"],
-                "backend": backend.name,
+                "backend": verifier_backend_inst.name,
             }
         )
 

@@ -106,6 +106,12 @@ The v0.6.x trio configures Heimdal for the machine it's installed on:
     heimdal profile show                               # active limits + source
     heimdal profile explain <name>                     # human-readable
 
+Multi-GPU (v0.7.0): map roles to separate Ollama instances via
+`ollama.endpoints` in the manifest, then inspect with
+`heimdal endpoints list` / `heimdal endpoints status`. B3/B4 sample
+drafting runs concurrently across worker endpoints
+(`concurrency.parallel_samples: auto`).
+
 After `models assign --write`, `heimdal run` uses the assigned worker
 model when no `--model` is given. Operator pins
 (`heimdal models pin --role worker --model qwen2.5:7b`) override

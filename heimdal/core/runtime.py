@@ -30,6 +30,7 @@ from heimdal.ids import new_id, repo_root, sha256_obj
 from heimdal.hardware import runtime_profile
 from heimdal.hardware.role_assigner import assigned_worker_model
 from heimdal.models.base import select_backend
+from heimdal.models.endpoint_pool import EndpointPool
 from heimdal.skills.registry import SkillRegistry
 from heimdal.storage import Storage
 
@@ -99,6 +100,10 @@ class Runtime:
                 self.assignment_source = source or "auto_tuner"
         self.model_override = model_override
         self.verifier_override = verifier_override
+        # v0.7.0: role -> endpoint routing for multi-GPU machines. With no
+        # ollama.endpoints configured (or on the offline backend) the pool
+        # resolves every role to self.backend -- identical to pre-v0.7.0.
+        self.endpoint_pool = EndpointPool(self.backend, self.config)
         self.scheduler = Scheduler(self.config)
         # Hardware does not change during a session; profile once and reuse.
         self.hardware_profile = quick_profile(self.config)
@@ -149,6 +154,7 @@ class Runtime:
             trace,
             model_override=self.model_override,
             verifier_override=self.verifier_override,
+            backend_pool=self.endpoint_pool,
         )
 
         run_id = new_id("run")
@@ -168,6 +174,7 @@ class Runtime:
             "runtime_profile": self.runtime_profile["name"],
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
+            "endpoint_routing": self.endpoint_pool.routing_map(),
         }
 
         repro = repro_trace.build_repro_pack(

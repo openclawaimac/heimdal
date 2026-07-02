@@ -91,10 +91,14 @@ host adapters.
 
 ## Needs approval (loop must NOT build these autonomously)
 
-- [ ] **v0.7.0 — Multi-GPU Role Routing.** Per-endpoint routing
+- [x] **v0.7.0 — Multi-GPU Role Routing.** Per-endpoint routing
       (worker → GPU0, verifier → GPU1), concurrent role execution, parallel
       sample generation for B3/B4. NOT tensor parallelism, NOT a distributed
       cluster. Large architectural change — requires explicit go-ahead.
+      (Approved by user ("do nr 1 until finished"); shipped in v0.7.0.
+      Mechanics CI-proven with stubs incl. a concurrency barrier test;
+      REAL-GPU validation still pending on user hardware — commands in
+      CHANGELOG v0.7.0. Tag after that validation.)
 - [x] **Brain role actually used at runtime** for B3/B4 planning (currently
       assigned but never invoked). Medium change to the Quality Factory —
       confirm desired behavior first. (Done in v0.6.3 — user delegated the

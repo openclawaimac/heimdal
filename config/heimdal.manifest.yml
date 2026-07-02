@@ -8,6 +8,25 @@ ollama:
   timeout_seconds: 120
   max_retries: 2
   retry_backoff_seconds: 1.0
+  # v0.7.0: optional multi-GPU role routing. Each endpoint is a separate
+  # Ollama instance (pin one per GPU with CUDA_VISIBLE_DEVICES + OLLAMA_HOST)
+  # and lists which Heimdal roles it serves: worker, semantic_verifier,
+  # brain, coder. Empty list = everything on base_url (default behavior).
+  #
+  # endpoints:
+  #   - name: gpu0
+  #     base_url: http://localhost:11434
+  #     roles: [worker, brain]
+  #   - name: gpu1
+  #     base_url: http://localhost:11435
+  #     roles: [semantic_verifier]
+  endpoints: []
+concurrency:
+  # v0.7.0: B3/B4 multi-sample drafting concurrency.
+  #   auto  -> parallel only when >1 worker endpoint is configured
+  #   true  -> always parallel when samples > 1
+  #   false -> never (serial, pre-v0.7.0 behavior)
+  parallel_samples: auto
 model_profiles:
   verifier:
     candidates: [qwen3:4b, qwen2.5:3b, gemma3:4b]

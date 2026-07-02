@@ -1,5 +1,80 @@
 # Changelog
 
+## v0.7.0 — Multi-GPU Role Routing
+
+Heimdal can now *use* the multiple GPUs it has detected since v0.6.0.
+Roles (worker / semantic_verifier / brain / coder) route to separate
+Ollama endpoints, and B3/B4 multi-sample drafting runs concurrently
+across worker endpoints.
+
+Scope guard, unchanged from the original plan: this is role-level
+routing across whole Ollama instances. It is NOT tensor/model
+parallelism (splitting one model across GPUs is Ollama/llama.cpp's job)
+and NOT a distributed cluster.
+
+### Configuration
+
+    ollama:
+      base_url: http://localhost:11434
+      endpoints:                      # optional; empty = single-endpoint
+        - name: gpu0
+          base_url: http://localhost:11434
+          roles: [worker, brain]
+        - name: gpu1
+          base_url: http://localhost:11435
+          roles: [semantic_verifier, worker]
+    concurrency:
+      parallel_samples: auto          # auto | true | false
+
+`parallel_samples: auto` (default) drafts B3/B4 samples concurrently
+only when more than one worker endpoint exists. `true` forces it (also
+offline; used by CI), `false` restores the serial pre-v0.7.0 loop.
+Parallel mode trades tokens for wall-clock: all samples are always
+generated, then verified in order with early-stop at the first PASS.
+
+### What changed
+
+- `heimdal/models/endpoint_pool.py`: EndpointPool resolves role ->
+  backend; backends cached per endpoint; offline sessions and
+  empty-endpoint configs resolve everything to the default backend
+  (byte-for-byte pre-v0.7.0 behavior — the whole 288-test suite passes
+  untouched).
+- Quality Factory: per-role backends (worker drafts, semantic verify,
+  brain plan each on their own endpoint), `endpoint_routing` +
+  `parallel_samples` trace events, per-endpoint request events in the
+  Trace Pack, `endpoint_routing` map in run metrics.
+- CLI: `heimdal endpoints list` (show routing) and
+  `heimdal endpoints status` (ping each endpoint; exit 1 if any DOWN).
+
+### Local multi-GPU validation (run on real hardware)
+
+CI proves the mechanics with stubs (including a barrier test that fails
+unless two drafts are genuinely in flight simultaneously). Real-GPU
+validation on e.g. a 2-GPU box:
+
+    # Terminal 1 — GPU 0
+    CUDA_VISIBLE_DEVICES=0 OLLAMA_HOST=127.0.0.1:11434 ollama serve
+    # Terminal 2 — GPU 1
+    CUDA_VISIBLE_DEVICES=1 OLLAMA_HOST=127.0.0.1:11435 ollama serve
+    # Pull the model on BOTH instances
+    OLLAMA_HOST=127.0.0.1:11434 ollama pull qwen2.5:7b
+    OLLAMA_HOST=127.0.0.1:11435 ollama pull qwen2.5:7b
+
+    # Manifest: add the two endpoints (worker+brain on gpu0,
+    # semantic_verifier+worker on gpu1), keep parallel_samples: auto.
+
+    heimdal endpoints list
+    heimdal endpoints status            # both must be "ok"
+    heimdal run --instruction "Compare queues and stacks in depth." \
+        --backend ollama --verifier hybrid --json
+    # then check the trace pack for:
+    #   endpoint_routing  (role -> gpu0/gpu1)
+    #   parallel_samples  (only on B3/B4 tasks)
+    # and nvidia-smi on both GPUs during the run.
+
+Single-GPU machines: leave `endpoints: []` — nothing changes.
+
+
 ## v0.6.3 — Brain role activated + loop hardening
 
 The brain/planner role -- assigned by the role-assigner since v0.6.1 but

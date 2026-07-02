@@ -6,6 +6,7 @@ Commands (docs/builder_pack/04_runtime/CORE_RUNTIME_REQUIREMENTS.md):
     heimdal doctor [--json] [--capability-test] [--all-models] [--write-profile] [--profile]
     heimdal models {list, capabilities, assign [--write], roles, pin, unpin}
     heimdal profile {show, detect, write, set <name>, explain [<name>]}
+    heimdal endpoints {list, status}   (v0.7.0 multi-GPU role routing)
 
     Tasks:
     heimdal run demo | --input <task.json> | --instruction "..." [--role <id>]
@@ -578,6 +579,58 @@ def cmd_profile(args) -> int:
         )
         print(f"profile written: {record['name']} (source=auto)")
         return 0
+
+    return 2
+
+
+# -- endpoints ---------------------------------------------------------------
+def cmd_endpoints(args) -> int:
+    """Show / ping the multi-GPU endpoint routing (v0.7.0)."""
+    from heimdal.models.endpoint_pool import EndpointPool, parse_endpoints
+    from heimdal.models.base import select_backend
+
+    config = load_config(args.manifest)
+    command = args.endpoints_command
+
+    endpoints = parse_endpoints(config.ollama)
+    if command == "list":
+        if args.json:
+            print(json.dumps(
+                [{"name": e.name, "base_url": e.base_url, "roles": e.roles}
+                 for e in endpoints],
+                indent=2,
+            ))
+            return 0
+        if not endpoints:
+            print("No endpoints configured; all roles use ollama.base_url "
+                  f"({config.ollama.get('base_url')}).")
+            print("Add ollama.endpoints entries in the manifest for "
+                  "multi-GPU role routing.")
+            return 0
+        for endpoint in endpoints:
+            roles = ", ".join(endpoint.roles) or "(no roles)"
+            print(f"  {endpoint.name:<12} {endpoint.base_url:<32} {roles}")
+        return 0
+
+    if command == "status":
+        backend = select_backend(config, prefer="ollama")
+        pool = EndpointPool(backend, config)
+        status = pool.status()
+        if args.json:
+            print(json.dumps(status, indent=2))
+            return 0
+        if not status:
+            print("No endpoints configured.")
+            return 0
+        exit_code = 0
+        for entry in status:
+            mark = "ok  " if entry["reachable"] else "DOWN"
+            models = ", ".join(entry["models"][:4]) or "-"
+            print(f"  [{mark}] {entry['name']:<12} {entry['base_url']:<32} "
+                  f"roles={','.join(entry['roles'])} models={models}")
+            if not entry["reachable"]:
+                exit_code = 1
+        return exit_code
 
     return 2
 
@@ -1633,6 +1686,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile.add_argument("--json", action="store_true")
     p_profile.add_argument("--manifest", help="path to the Heimdal manifest")
     p_profile.set_defaults(func=cmd_profile)
+
+    p_endpoints = sub.add_parser(
+        "endpoints", help="multi-GPU endpoint routing (list / status)",
+    )
+    p_endpoints.add_argument("endpoints_command", choices=["list", "status"])
+    p_endpoints.add_argument("--json", action="store_true")
+    p_endpoints.add_argument("--manifest", help="path to the Heimdal manifest")
+    p_endpoints.set_defaults(func=cmd_endpoints)
 
     p_models = sub.add_parser(
         "models", help="inspect installed models + manage role assignments",
