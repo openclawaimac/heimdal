@@ -8,6 +8,11 @@ name: tag-backlog
 
 on:
   workflow_dispatch:
+  # The dev environment can push branches but not tags and cannot dispatch
+  # workflows; pushing the trigger branch below is its way to fire this job.
+  push:
+    branches:
+      - trigger/tag-backlog
 
 permissions:
   contents: write
