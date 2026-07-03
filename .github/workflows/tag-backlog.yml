@@ -75,3 +75,160 @@ jobs:
             "Heimdal v0.6.3 - Brain role activated for B3/B4"
           # v0.7.0 intentionally NOT tagged: pending real multi-GPU
           # validation on user hardware (see CHANGELOG v0.7.0).
+      - name: Create releases for backlog tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          rel() {
+            tag="$1"; title="$2"; notes="$(cat)"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "skip  $tag (release exists)"
+              return 0
+            fi
+            gh release create "$tag" --verify-tag --prerelease \
+              --title "$title" --notes "$notes"
+            echo "released $tag"
+          }
+
+          rel v0.2.6-hermes-host-contract-polish "Heimdal v0.2.6 — Hermes Host Contract Polish" <<'EOF'
+          Machine-readable host contract for Hermes integrations.
+
+          - Status/error codes (SOURCE_MISSING, VERIFIER_SEMANTIC_FAIL, ...) and structured `needed_inputs` on need_input.
+          - `schemas/hermes_result.schema.json` — results validated, no internal leakage, host-safe refs only.
+          - New `heimdal verify --task --answer` (verifier-only path) and `heimdal hermes capabilities`.
+          - `callback_delivered` absolute path replaced by host-safe `callback_delivery {status, target_ref}`.
+
+          Validated on real Ollama (qwen2.5:7b, hybrid). 97 unit tests; eval 40/40.
+          EOF
+
+          rel v0.2.7-integration-polish "Heimdal v0.2.7 — Integration Polish & Host Safety" <<'EOF'
+          Diagnostics and host-safety polish for Hermes/OpenClaw integrators.
+
+          - `heimdal hermes doctor` / `heimdal openclaw doctor`: 12-point integration check with machine-readable report.
+          - `heimdal openclaw capabilities` for symmetry.
+          - Concise `needed_inputs.missing_topic` extraction ("Product Y refund policy" instead of the whole prompt).
+          - Artifact visibility policy: task_contract joins context_packet as internal-only.
+          - docs/ENTRYPOINTS.md: which CLI for which caller.
+
+          106 unit tests; eval 40/40.
+          EOF
+
+          rel v0.2.8-local-file-bridge "Heimdal v0.2.8 — Local File Bridge" <<'EOF'
+          File-based transport so external local agents can invoke Heimdal without Python or a server.
+
+          - `heimdal bridge {init, once, run, status}`: inbox -> processing -> {archive | failed} with atomic moves.
+          - Per-job adapter selection (hermes / openclaw / generic) + per-job backend/model/verifier overrides.
+          - Machine-readable failure codes (JOB_SCHEMA_INVALID, ADAPTER_UNSUPPORTED, OLLAMA_UNREACHABLE, ...).
+          - Path-traversal-safe result filenames; host-safe output for all adapters (incl. the generic-result sanitization fix).
+
+          Validated on real Ollama. 121 unit tests; eval 40/40.
+          EOF
+
+          rel v0.3.0-host-invocation-file-bridge "Heimdal v0.3.0 — Host Invocation File Bridge" <<'EOF'
+          The bridge, release-finalized.
+
+          - `heimdal bridge submit --input <job.json>` and `heimdal bridge watch` (canonical poll-loop name).
+          - Third adapter renamed generic -> `heimdal` (legacy name still accepted).
+          - Canonical example jobs `examples/bridge/{heimdal,hermes,openclaw}_task.json`, backend-unpinned so CLI flags drive release validation.
+          - CHANGELOG with full flow, payload table, failure handling, and local real-Ollama validation commands.
+
+          Tag includes the backend-unpin fix (branch release/v0.3.0). Real-Ollama validated for all three adapters.
+          EOF
+
+          rel v0.4.0-dream-mode "Heimdal v0.4.0 — Dream Mode" <<'EOF'
+          Local self-improvement loop: Heimdal mines its own history for improvement proposals.
+
+          - `heimdal dream {run, report, list}` scans Trace/Repro packs, eval summaries, and bridge failures.
+          - 12 failure-pattern categories -> structured patch / skill / eval-case proposals under storage/dream/.
+          - Offline, deterministic, read-only against stable state — proposals are review-only artifacts.
+
+          Real-Ollama validated. No stable mutation, no cloud calls.
+          EOF
+
+          rel v0.4.1-patch-promotion-eval-review "Heimdal v0.4.1 — Patch Promotion + Eval Review" <<'EOF'
+          Controlled promotion pipeline: experimental -> beta -> stable / rejected.
+
+          - `heimdal patch {list, show, review, eval, promote, reject}` with per-channel gates.
+          - Stable promotion requires a passing candidate eval + must-pass suite green — always explicit, never automatic.
+          - Review artifacts + candidate evals persisted under storage/patches/{reviews,evals}/.
+          - Includes the real-validation blocker fixes: Dream patches register into the lifecycle with intent/rollback, and patch eval combines lifecycle blockers with the eval signal (eval_recommendation / lifecycle_recommendation / blocking_issues).
+
+          Tagged at the post-blocker-fix commit. 178 unit tests; eval 40/40.
+          EOF
+
+          rel v0.4.2-skill-library-2 "Heimdal v0.4.2 — Skill Library 2.0" <<'EOF'
+          Versioned, selectable, testable skills that Dream Mode can improve over time.
+
+          - JSON skills under storage/skills/<role>/ with triggers, instructions, and durable per-skill stats.
+          - Registry-driven selection: role + trigger overlap + past pass-rate; deployment-mode caps (3/5/5/7); never inject irrelevant skills.
+          - 7 seed skills + `heimdal skill {list, show, search, validate, install, archive, stats, bootstrap}`.
+          - Includes blocker fixes: skill_selection trace event, selected_skills in Repro Packs, `heimdal run --role`, strong cross-role trigger selection.
+
+          Tagged at the post-blocker-fix commit. Eval 40/40.
+          EOF
+
+          rel v0.5.0-mirror-mode "Heimdal v0.5.0 — Mirror Mode" <<'EOF'
+          Optional cloud-teacher comparison. OFF by default; local-first preserved.
+
+          - Teacher provider abstraction: deterministic stub (CI path), manual file-fed, lazy-loaded OpenAI/Anthropic (env-var opt-in).
+          - Four safety gates before any cloud call: enabled flag, privacy_mode=local_only, per-run call budget, redaction (API keys, secrets, private-key blocks, .ssh paths).
+          - `heimdal mirror {run [--dry-run], list, report, show}`; runs/reports under storage/mirror/.
+
+          Stub-validated; CI never requires cloud credentials. 221 unit tests; eval 40/40.
+          EOF
+
+          rel v0.5.1-frontier-diff-engine "Heimdal v0.5.1 — Frontier Diff Engine" <<'EOF'
+          Structured local-vs-teacher comparison that never assumes the teacher is right.
+
+          - Deterministic 14-dimension scoring (task_adherence ... hallucination_risk); same answer scores the same every run.
+          - A hallucinating teacher is disqualified: local No-Guess beats a teacher that invents specifics.
+          - Diff findings map to patch / skill / eval-case proposals compatible with the v0.4.1 lifecycle.
+          - `heimdal mirror {diff, proposals, promote-proposal}`.
+
+          Stub-validated. 204 unit tests; eval 40/40.
+          EOF
+
+          rel v0.6.0-hardware-auto-tuner "Heimdal v0.6.0 — Hardware Auto-Tuner & Capability Matrix" <<'EOF'
+          Heimdal inspects the machine it runs on and recommends a runtime profile.
+
+          - Capability matrix: platform, CPU/RAM/disk, CUDA/Metal/ROCm accelerators, Ollama models, per-model smoke tests (generation / JSON / verifier judgment).
+          - Embedding models skipped for generation tests; per-model failures never crash doctor.
+          - WSL2 storage-root warning (/mnt/c); profile recommendation cpu_only / dev / single_gpu / pipeline / factory.
+          - `heimdal doctor {--profile, --write-profile, --all-models, --benchmark-light}`.
+
+          219 unit tests; eval 40/40.
+          EOF
+
+          rel v0.6.1-model-role-assignment "Heimdal v0.6.1 — Model Role Assignment" <<'EOF'
+          Installed models auto-assigned to internal roles from the capability matrix.
+
+          - `model_roles` manifest config (preferred + min_capabilities per role); capability-gated assignment with safe fallbacks.
+          - Operator pins (`heimdal models pin/unpin`) override auto-assignment; embedding models never assigned to generation roles.
+          - Runtime uses the assigned worker model when no --model is given; `assignment_source` recorded in trace/repro.
+          - `heimdal models {list, capabilities, assign --write, roles}`.
+
+          231 unit tests; eval 40/40.
+          EOF
+
+          rel v0.6.2-runtime-profiles "Heimdal v0.6.2 — Runtime Profiles" <<'EOF'
+          Hardware-adaptive budgets layered onto the static manifest.
+
+          - Five profiles (cpu_only / dev / single_gpu / pipeline / factory) controlling context budget, default quality level, repair budget, Dream/Mirror defaults.
+          - `heimdal profile {show, detect, write, set, explain}`; explicit task constraints always win over profile defaults.
+          - runtime_profile / profile_source / profile_limits recorded in run metrics.
+          - Includes both QA fixes: CLI --instruction honors the active profile, and verify_envelope reports the same v0.6.x metrics as run_envelope.
+
+          Tagged at the post-QA-fix commit. 246 unit tests; eval 40/40.
+          EOF
+
+          rel v0.6.3-brain-role "Heimdal v0.6.3 — Brain Role Activated" <<'EOF'
+          The brain/planner role — assigned since v0.6.1 — now runs at runtime.
+
+          - B3/B4 tasks get a planning step before the worker drafts; the plan is prepended to the worker prompt. B0-B2 (and the eval suite) untouched.
+          - brain_plan trace event + brain model in Repro Pack models.
+          - Folds in the autonomous-loop hardening batch: bearer-header redaction fix, mirror proposal winner fix, openclaw_result schema, `heimdal mirror score`, `heimdal patch eval --targeted`, clearer config errors. Tests 246 -> 288.
+
+          Eval 40/40 throughout.
+          EOF
