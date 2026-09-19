@@ -88,10 +88,82 @@ have drafted serially and left the cluster idle.
 When parallel sampling engages, the Trace Pack records a `parallel_samples`
 event with the slot count, so you can confirm the width a run actually used.
 
+## Health-aware failover
+
+Pinning a role to one endpoint makes that endpoint a single point of
+failure. If the semantic verifier is mapped to GPU 1 and GPU 1 stops
+answering, the run should not die while GPU 0 sits idle and able to serve
+it. So each role has an ordered list of candidate endpoints, and a request
+that fails on one is reissued on the next.
+
+`ollama.failover` picks the policy:
+
+| value | fallback order for a role |
+| --- | --- |
+| `auto` (default) | the role's own endpoints, then any other endpoint in the pool as a borrowed spare |
+| `strict` | only the role's own endpoints |
+| `off` | none; a downed endpoint fails the run |
+
+Under `auto`, running the verifier on the worker's GPU is worse than
+running it on its own — but far better than failing the run. Under
+`strict` you keep the isolation and accept the failure. `off` restores
+pre-v0.7.1 behaviour.
+
+`heimdal endpoints list` prints the resolved chain per role:
+
+```
+  failover: auto
+    worker             gpu0 -> gpu1
+    semantic_verifier  gpu1 -> gpu0
+```
+
+### Circuit breaker
+
+An endpoint that raises is taken out of rotation rather than retried on
+every subsequent request. After `failover_cooldown_seconds` (default 60)
+one trial request is allowed through; if it succeeds the endpoint is back
+in rotation, if it fails the endpoint drops out again. The ledger is
+session-scoped and shared across roles, so one role discovering a dead
+GPU spares the others from rediscovering it.
+
+Note that the per-endpoint retries `ollama.max_retries` configures happen
+*first*, inside a single endpoint. Failover only engages once an endpoint
+has exhausted those — a single failover therefore means the endpoint
+genuinely failed several times, which is why one failure is enough to open
+its circuit.
+
+If every candidate's circuit is open, requests are attempted anyway rather
+than refused outright: the cooldown may simply not have elapsed on an
+endpoint that has since recovered.
+
+### What gets rerouted
+
+Connection failures, timeouts, and missing-model (HTTP 404) responses all
+fail over — another endpoint may well satisfy any of them. Errors from
+anywhere else in the pipeline are not caught, so a genuine bug surfaces
+instead of being masked by a retry storm across the cluster.
+
+### Observability
+
+A degraded run is visible rather than just slower:
+
+- `endpoint_failover_policy` (Trace Pack) records the candidate chain at
+  the start of a run.
+- `endpoint_unhealthy` records each endpoint that failed, with the error.
+- `endpoint_failover` records which endpoint ultimately served the
+  request, which ones were tried and failed, which were skipped for
+  having an open circuit, and whether the winner was borrowed from
+  another role.
+- `metrics.endpoint_failovers` counts every request that did not land on
+  its configured first choice — including ones where the first choice was
+  skipped rather than tried. `0` means the run was not degraded at all.
+
 ## What this does not do
 
 - It does not pool GPU memory or let a model larger than one device run.
 - It does not shard a model or split an in-flight request across devices.
-- It does not retry a failed sample on a different endpoint; endpoint
-  health is reported by `heimdal endpoints status`, not routed around
-  mid-run.
+- It does not resume a partially generated response on another endpoint;
+  a failed request is reissued from the start.
+- It does not health-check endpoints ahead of time. The first request to
+  a dead endpoint is what discovers it — `heimdal endpoints status` pings
+  them on demand, but a run does not.

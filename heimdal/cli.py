@@ -594,12 +594,17 @@ def cmd_endpoints(args) -> int:
 
     endpoints = parse_endpoints(config.ollama)
     if command == "list":
+        pool = EndpointPool(select_backend(config, prefer="ollama"), config)
         if args.json:
-            print(json.dumps(
-                [{"name": e.name, "base_url": e.base_url, "roles": e.roles}
-                 for e in endpoints],
-                indent=2,
-            ))
+            print(json.dumps({
+                "failover": pool.failover_mode,
+                "endpoints": [
+                    {"name": e.name, "base_url": e.base_url,
+                     "roles": e.roles, "slots": e.slots}
+                    for e in endpoints
+                ],
+                "role_candidates": pool.failover_map(),
+            }, indent=2))
             return 0
         if not endpoints:
             print("No endpoints configured; all roles use ollama.base_url "
@@ -609,7 +614,13 @@ def cmd_endpoints(args) -> int:
             return 0
         for endpoint in endpoints:
             roles = ", ".join(endpoint.roles) or "(no roles)"
-            print(f"  {endpoint.name:<12} {endpoint.base_url:<32} {roles}")
+            slots = f"x{endpoint.slots}" if endpoint.slots > 1 else "  "
+            print(f"  {endpoint.name:<12} {endpoint.base_url:<32} "
+                  f"{slots} {roles}")
+        print(f"\n  failover: {pool.failover_mode}")
+        for role, chain in pool.failover_map().items():
+            if len(chain) > 1:
+                print(f"    {role:<18} {' -> '.join(chain)}")
         return 0
 
     if command == "status":
@@ -626,8 +637,9 @@ def cmd_endpoints(args) -> int:
         for entry in status:
             mark = "ok  " if entry["reachable"] else "DOWN"
             models = ", ".join(entry["models"][:4]) or "-"
+            slots = f" slots={entry['slots']}" if entry["slots"] > 1 else ""
             print(f"  [{mark}] {entry['name']:<12} {entry['base_url']:<32} "
-                  f"roles={','.join(entry['roles'])} models={models}")
+                  f"roles={','.join(entry['roles'])}{slots} models={models}")
             if not entry["reachable"]:
                 exit_code = 1
         return exit_code

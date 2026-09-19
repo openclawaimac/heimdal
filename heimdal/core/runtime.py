@@ -175,6 +175,7 @@ class Runtime:
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
             "endpoint_routing": self.endpoint_pool.routing_map(),
+            "endpoint_failovers": self.endpoint_pool.failover_count(),
         }
 
         repro = repro_trace.build_repro_pack(
@@ -263,13 +264,16 @@ class Runtime:
         )
         trace.event("routing", **routing)
 
-        self.backend.event_sink = trace.event
+        # Use the same per-role routing (and failover) as a full run, so
+        # `heimdal verify` is not the one path that ignores the pool.
+        verify_backend = self.endpoint_pool.backend_for_role("semantic_verifier")
+        verify_backend.event_sink = trace.event
         try:
             verification = verifier.verify(
-                answer_text, contract, packet, routing, self.config, self.backend
+                answer_text, contract, packet, routing, self.config, verify_backend
             )
         finally:
-            self.backend.event_sink = None
+            verify_backend.event_sink = None
 
         semantic = verification.get("semantic")
         models: list[dict] = []
@@ -285,7 +289,7 @@ class Runtime:
                 {
                     "role": "semantic_verifier",
                     "model": semantic["model"],
-                    "backend": self.backend.name,
+                    "backend": verify_backend.name,
                 }
             )
         trace.event("verify", status=verification["status"], score=verification["score"])
@@ -303,6 +307,8 @@ class Runtime:
             "runtime_profile": self.runtime_profile["name"],
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
+            "endpoint_routing": self.endpoint_pool.routing_map(),
+            "endpoint_failovers": self.endpoint_pool.failover_count(),
         }
         repro = repro_trace.build_repro_pack(
             models=models,

@@ -122,6 +122,15 @@ def run_quality_factory(
         routing_map = backend_pool.routing_map()
         if any(name != "default" for name in routing_map.values()):
             trace.event("endpoint_routing", **routing_map)
+        # Record the fallback order up front, so a Trace Pack showing an
+        # endpoint_failover event also shows what the alternatives were.
+        failover_map = backend_pool.failover_map()
+        if any(len(chain) > 1 for chain in failover_map.values()):
+            trace.event(
+                "endpoint_failover_policy",
+                mode=backend_pool.failover_mode,
+                candidates=failover_map,
+            )
 
     packet = context_os.build_packet(contract, role, envelope, storage, config)
     selected_skills_refs = [

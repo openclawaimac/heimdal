@@ -18,7 +18,13 @@ An endpoint may itself be a fan-out router over several machines — NVIDIA
 PAIR, for instance, presents one Ollama-compatible proxy that spreads
 independent requests across every paired node on the LAN. Give such an
 endpoint a `slots:` count and Heimdal drives it that many requests wide from
-a single `base_url`. See [`docs/MULTI_GPU.md`](docs/MULTI_GPU.md).
+a single `base_url`.
+
+Endpoints that stop answering are routed around rather than failing the run:
+each role has an ordered list of fallback endpoints, a failed endpoint is
+taken out of rotation until a cooldown elapses, and every reroute is recorded
+in the Trace Pack. Tune with `ollama.failover` (`auto` / `strict` / `off`).
+See [`docs/MULTI_GPU.md`](docs/MULTI_GPU.md).
 
 The full specification lives in [`docs/builder_pack/`](docs/builder_pack/);
 start with `docs/builder_pack/INDEX.md`.

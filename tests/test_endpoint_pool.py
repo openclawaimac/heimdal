@@ -130,10 +130,12 @@ class EndpointPoolTests(unittest.TestCase):
                          "http://localhost:11434")
         self.assertEqual(pool.backend_for_role("semantic_verifier").base_url,
                          "http://localhost:11435")
-        # brain shares gpu0; coder is unmapped -> default.
+        # brain shares gpu0; coder is unmapped, so its first choice is the
+        # default backend (with the mapped endpoints behind it as spares).
         self.assertEqual(pool.backend_for_role("brain").base_url,
                          "http://localhost:11434")
-        self.assertIs(pool.backend_for_role("coder"), pool.default_backend)
+        self.assertIs(pool.backend_for_role("coder").primary,
+                      pool.default_backend)
         self.assertEqual(pool.routing_map()["semantic_verifier"], "gpu1")
 
     def test_multiple_worker_endpoints_detected(self):
@@ -143,8 +145,16 @@ class EndpointPoolTests(unittest.TestCase):
 
     def test_backends_are_cached_per_endpoint(self):
         pool = self._pool(_ENDPOINTS)
+        # worker and brain both map to gpu0. Each role gets its own failover
+        # wrapper (their fallback chains differ), but the wrappers share the
+        # one cached backend for that endpoint.
+        self.assertIs(pool.backend_for_role("worker").primary,
+                      pool.backend_for_role("brain").primary)
+
+    def test_role_wrappers_are_cached(self):
+        pool = self._pool(_ENDPOINTS)
         self.assertIs(pool.backend_for_role("worker"),
-                      pool.backend_for_role("brain"))
+                      pool.backend_for_role("worker"))
 
     def test_offline_default_backend_ignores_endpoint_config(self):
         from heimdal.models.offline import OfflineBackend
@@ -250,6 +260,12 @@ class QualityFactoryRoutingTests(unittest.TestCase):
         def routing_map(self):
             return {"worker": "gpu0", "semantic_verifier": "gpu1",
                     "brain": "gpu0", "coder": "default"}
+
+        failover_mode = "auto"
+
+        def failover_map(self):
+            return {"worker": ["gpu0"], "semantic_verifier": ["gpu1"],
+                    "brain": ["gpu0"], "coder": ["default"]}
 
         def parallel_samples_enabled(self, config=None):
             return False
@@ -373,7 +389,11 @@ class EndpointsCLITests(unittest.TestCase):
             code = main(["endpoints", "list", "--json", "--manifest", self.manifest])
         self.assertEqual(code, 0)
         data = json.loads(buf.getvalue())
-        self.assertEqual([e["name"] for e in data], ["gpu0", "gpu1"])
+        self.assertEqual([e["name"] for e in data["endpoints"]], ["gpu0", "gpu1"])
+        self.assertEqual(data["failover"], "auto")
+        # gpu1 serves the verifier, and gpu0 backs it up.
+        self.assertEqual(data["role_candidates"]["semantic_verifier"],
+                         ["gpu1", "gpu0"])
 
     def test_status_flags_unreachable_endpoint(self):
         # Port 9 (discard) refuses fast; status must mark it DOWN and exit 1.

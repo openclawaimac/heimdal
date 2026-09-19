@@ -30,6 +30,15 @@ ollama:
   #     roles: [worker, brain, semantic_verifier]
   #     slots: 3
   endpoints: []
+  # v0.7.1: what happens when an endpoint stops answering.
+  #   auto   -> fall back to the role's other endpoints, then borrow any
+  #             other endpoint in the pool (default)
+  #   strict -> fall back only within the role's own endpoints
+  #   off    -> no fallback; a downed endpoint fails the run
+  failover: auto
+  # How long a failed endpoint stays out of rotation before one trial
+  # request is allowed through again.
+  failover_cooldown_seconds: 60
 concurrency:
   # v0.7.0: B3/B4 multi-sample drafting concurrency.
   #   auto  -> parallel only when the worker role has >1 concurrent slot
