@@ -14,6 +14,12 @@ B3/B4 multi-sample drafting runs concurrently across worker endpoints
 parallelism: splitting one model across GPUs remains Ollama/llama.cpp's job.
 With no endpoints configured, everything runs on the single default endpoint.
 
+An endpoint may itself be a fan-out router over several machines — NVIDIA
+PAIR, for instance, presents one Ollama-compatible proxy that spreads
+independent requests across every paired node on the LAN. Give such an
+endpoint a `slots:` count and Heimdal drives it that many requests wide from
+a single `base_url`. See [`docs/MULTI_GPU.md`](docs/MULTI_GPU.md).
+
 The full specification lives in [`docs/builder_pack/`](docs/builder_pack/);
 start with `docs/builder_pack/INDEX.md`.
 

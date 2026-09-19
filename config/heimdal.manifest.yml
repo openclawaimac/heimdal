@@ -20,10 +20,19 @@ ollama:
   #   - name: gpu1
   #     base_url: http://localhost:11435
   #     roles: [semantic_verifier]
+  #
+  # An endpoint that is itself a fan-out router over several machines
+  # (e.g. NVIDIA PAIR's Ollama-compatible proxy) declares how many
+  # requests it can absorb at once, so one base_url can still be driven
+  # at full width:
+  #   - name: pair
+  #     base_url: http://127.0.0.1:11434
+  #     roles: [worker, brain, semantic_verifier]
+  #     slots: 3
   endpoints: []
 concurrency:
   # v0.7.0: B3/B4 multi-sample drafting concurrency.
-  #   auto  -> parallel only when >1 worker endpoint is configured
+  #   auto  -> parallel only when the worker role has >1 concurrent slot
   #   true  -> always parallel when samples > 1
   #   false -> never (serial, pre-v0.7.0 behavior)
   parallel_samples: auto

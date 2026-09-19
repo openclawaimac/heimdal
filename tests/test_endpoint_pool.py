@@ -170,6 +170,69 @@ class EndpointPoolTests(unittest.TestCase):
         self.assertFalse(pool_multi.parallel_samples_enabled(config))
 
 
+class FanOutRouterEndpointTests(unittest.TestCase):
+    """A single endpoint that fronts several machines (e.g. NVIDIA PAIR).
+
+    Only one base_url is configured, so counting distinct endpoints would
+    wrongly report no room for concurrency; the slot count is what says
+    how wide the router can be driven.
+    """
+
+    _PAIR = [{
+        "name": "pair",
+        "base_url": "http://127.0.0.1:11434",
+        "roles": ["worker", "brain"],
+        "slots": 3,
+    }]
+
+    def _pool(self, endpoints) -> EndpointPool:
+        config = temp_config(tempfile.mkdtemp())
+        config.manifest["ollama"] = dict(
+            config.manifest.get("ollama", {}), endpoints=endpoints,
+        )
+        return EndpointPool(OllamaBackend("http://localhost:11434"), config), config
+
+    def test_slots_parsed_and_defaulted(self):
+        parsed = parse_endpoints({"endpoints": [
+            {"name": "plain", "base_url": "http://a:11434"},
+            {"name": "router", "base_url": "http://b:11434", "slots": 4},
+            {"name": "junk", "base_url": "http://c:11434", "slots": "many"},
+            {"name": "zero", "base_url": "http://d:11434", "slots": 0},
+        ]})
+        self.assertEqual([e.slots for e in parsed], [1, 4, 1, 1])
+
+    def test_single_router_endpoint_enables_auto_parallel(self):
+        pool, config = self._pool(self._PAIR)
+        config.manifest["concurrency"] = {"parallel_samples": "auto"}
+        self.assertEqual(pool.worker_slots(), 3)
+        self.assertTrue(pool.parallel_samples_enabled(config))
+        # One distinct endpoint, so the old distinct-endpoint test is False;
+        # the slot count is what carries the concurrency signal now.
+        self.assertFalse(pool.has_multiple_worker_endpoints())
+
+    def test_worker_backends_repeat_per_slot_onto_one_backend(self):
+        pool, _ = self._pool(self._PAIR)
+        backends = pool.worker_backends()
+        self.assertEqual(len(backends), 3)
+        self.assertEqual({id(b) for b in backends}, {id(backends[0])})
+        self.assertEqual(backends[0].base_url, "http://127.0.0.1:11434")
+
+    def test_status_reports_slots(self):
+        pool, _ = self._pool(self._PAIR)
+        pool._backend_for_endpoint(pool._endpoints[0]).is_available = lambda: False
+        self.assertEqual(pool.status()[0]["slots"], 3)
+
+    def test_default_slots_preserve_pre_existing_behavior(self):
+        pool, config = self._pool([{
+            "name": "gpu0", "base_url": "http://localhost:11434",
+            "roles": ["worker"],
+        }])
+        config.manifest["concurrency"] = {"parallel_samples": "auto"}
+        self.assertEqual(pool.worker_slots(), 1)
+        self.assertFalse(pool.parallel_samples_enabled(config))
+        self.assertEqual(len(pool.worker_backends()), 1)
+
+
 class QualityFactoryRoutingTests(unittest.TestCase):
     """Per-role backends are actually used inside the pipeline."""
 
@@ -261,6 +324,10 @@ class ParallelSamplingTests(unittest.TestCase):
             e for e in trace["events"] if e["name"] == "parallel_samples"
         )
         self.assertEqual(parallel_event["data"]["count"], 2)
+        # One offline backend stands in for the pool here: one distinct
+        # endpoint, one slot.
+        self.assertEqual(parallel_event["data"]["worker_endpoints"], 1)
+        self.assertEqual(parallel_event["data"]["worker_slots"], 1)
 
     def test_serial_remains_the_default_without_endpoints(self):
         config = temp_config(tempfile.mkdtemp())  # parallel_samples: auto

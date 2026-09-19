@@ -22,6 +22,20 @@ runs on the single default endpoint exactly as before v0.7.0)::
           base_url: http://localhost:11435
           roles: [semantic_verifier]
 
+A single endpoint may itself be a fan-out router backed by several
+machines -- NVIDIA PAIR, for example, presents one Ollama-compatible
+proxy that spreads independent requests over every paired node. Such an
+endpoint declares how many requests it can absorb at once via ``slots``,
+so Heimdal knows to issue concurrent samples even though only one
+base_url is configured::
+
+    ollama:
+      endpoints:
+        - name: pair
+          base_url: http://127.0.0.1:11434
+          roles: [worker, brain, semantic_verifier]
+          slots: 3          # three paired nodes behind the router
+
 Scope guard: this is *role*-level routing across whole Ollama instances.
 It is NOT tensor/model parallelism (splitting one model across GPUs --
 that is Ollama/llama.cpp's job) and NOT a distributed cluster.
@@ -43,6 +57,17 @@ class Endpoint:
     name: str
     base_url: str
     roles: list[str] = field(default_factory=list)
+    # Concurrent requests this endpoint can absorb. 1 for a plain Ollama
+    # instance; higher for a fan-out router such as NVIDIA PAIR.
+    slots: int = 1
+
+
+def _parse_slots(raw_value) -> int:
+    try:
+        slots = int(raw_value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, slots)
 
 
 def parse_endpoints(ollama_cfg: dict) -> list[Endpoint]:
@@ -55,6 +80,7 @@ def parse_endpoints(ollama_cfg: dict) -> list[Endpoint]:
             name=str(raw.get("name") or f"endpoint{index}"),
             base_url=str(raw["base_url"]).rstrip("/"),
             roles=[str(r) for r in (raw.get("roles") or [])],
+            slots=_parse_slots(raw.get("slots", 1)),
         ))
     return out
 
@@ -103,12 +129,29 @@ class EndpointPool:
         return self._backend_for_endpoint(matches[0])
 
     def worker_backends(self) -> list[ModelBackend]:
-        """Every backend mapped to the worker role (>=1 enables parallel
-        sampling across devices); just the default when none are mapped."""
+        """One entry per concurrent worker slot; the default when none are
+        mapped.
+
+        An endpoint with ``slots: n`` appears n times, so the caller's
+        round-robin over this list issues n concurrent requests to it. That
+        is what lets a fan-out router in front of several machines be
+        driven at full width from a single configured base_url.
+        """
         matches = self.endpoints_for_role("worker")
         if not matches:
             return [self.default_backend]
-        return [self._backend_for_endpoint(e) for e in matches]
+        out: list[ModelBackend] = []
+        for endpoint in matches:
+            backend = self._backend_for_endpoint(endpoint)
+            out.extend([backend] * endpoint.slots)
+        return out
+
+    def worker_slots(self) -> int:
+        """Total concurrent worker requests the pool can sustain."""
+        matches = self.endpoints_for_role("worker")
+        if not matches:
+            return 1
+        return sum(e.slots for e in matches)
 
     def endpoint_name_for_role(self, role: str) -> str:
         matches = self.endpoints_for_role(role)
@@ -129,9 +172,11 @@ class EndpointPool:
           - true  -> always parallel when samples > 1 (works offline; used
                      by CI to exercise the path)
           - false -> never
-          - "auto" (default) -> parallel only when more than one worker
-                     endpoint is configured, i.e. there is real hardware to
-                     spread the samples across.
+          - "auto" (default) -> parallel only when the worker role has more
+                     than one concurrent slot, i.e. there is real hardware
+                     to spread the samples across. Several single-slot
+                     endpoints and one multi-slot router endpoint both
+                     qualify.
         """
         cfg = (config or self._config)
         flag = "auto"
@@ -141,7 +186,7 @@ class EndpointPool:
             return True
         if flag is False:
             return False
-        return self.has_multiple_worker_endpoints()
+        return self.worker_slots() > 1
 
     # -- health ----------------------------------------------------------------
     def status(self) -> list[dict]:
@@ -154,6 +199,7 @@ class EndpointPool:
                 "name": endpoint.name,
                 "base_url": endpoint.base_url,
                 "roles": endpoint.roles,
+                "slots": endpoint.slots,
                 "reachable": reachable,
                 "models": backend.list_models() if reachable else [],
             })

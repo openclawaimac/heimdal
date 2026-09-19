@@ -308,7 +308,10 @@ def run_quality_factory(
             trace.event(
                 "parallel_samples",
                 count=len(sample_results),
-                worker_endpoints=len(worker_backends),
+                # Distinct endpoints vs. total concurrent slots: a fan-out
+                # router is one endpoint with many slots.
+                worker_endpoints=len({id(b) for b in worker_backends}),
+                worker_slots=len(worker_backends),
             )
             for sample, result in enumerate(sample_results):
                 models_used.append(
