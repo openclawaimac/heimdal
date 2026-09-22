@@ -14,15 +14,47 @@ import time
 import urllib.error
 import urllib.request
 
+from heimdal.core import status_codes
 from heimdal.models.base import GenerationResult, ModelBackend
 
 
 class OllamaError(RuntimeError):
-    """Raised when an Ollama request fails in a non-recoverable way."""
+    """Raised when an Ollama request fails in a non-recoverable way.
+
+    Carries a machine-readable ``code`` from :mod:`heimdal.core.status_codes`
+    so callers can classify the failure without parsing the message. The
+    runtime turns that code into a host-visible result rather than letting
+    the exception escape into the host process.
+    """
+
+    def __init__(self, message: str, code: str = status_codes.OLLAMA_UNREACHABLE):
+        super().__init__(message)
+        self.code = code
 
 
 def _is_missing_model(exc: urllib.error.HTTPError) -> bool:
     return exc.code == 404
+
+
+def _error_code(exc: Exception | None) -> str:
+    """Classify an Ollama transport failure.
+
+    Each code implies a different fix: pull the model, wait or downsize,
+    start the server, or investigate a server-side fault.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        if _is_missing_model(exc):
+            return status_codes.OLLAMA_MODEL_MISSING
+        # The server answered, so it is reachable -- it just failed.
+        return status_codes.OLLAMA_REQUEST_FAILED
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return status_codes.OLLAMA_TIMEOUT
+    if isinstance(exc, urllib.error.URLError):
+        return status_codes.OLLAMA_UNREACHABLE
+    if isinstance(exc, ValueError):
+        # Reached the server but could not parse its response.
+        return status_codes.OLLAMA_REQUEST_FAILED
+    return status_codes.OLLAMA_UNREACHABLE
 
 
 def _describe_error(exc: Exception, base_url: str, model: str, timeout: float) -> str:
@@ -180,5 +212,6 @@ class OllamaBackend(ModelBackend):
                     time.sleep(backoff)
 
         raise OllamaError(
-            _describe_error(last_error, self.base_url, model, self.timeout)
+            _describe_error(last_error, self.base_url, model, self.timeout),
+            code=_error_code(last_error),
         )

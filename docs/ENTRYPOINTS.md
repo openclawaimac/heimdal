@@ -81,7 +81,13 @@ and writes one of:
   host-safe `trace_pack_ref` / `repro_pack_ref` and a `bridge` block.
 - `failed/<job_id>.error.json` (failure) -- carries a machine-readable
   `code`: `JOB_SCHEMA_INVALID`, `ADAPTER_UNSUPPORTED`, `OLLAMA_UNREACHABLE`,
-  `OLLAMA_MODEL_MISSING`, `INTERNAL_ERROR`.
+  `OLLAMA_TIMEOUT`, `OLLAMA_MODEL_MISSING`, `OLLAMA_REQUEST_FAILED`,
+  `INTERNAL_ERROR`.
+
+A backend outage during a run does not raise: it comes back as a `fail`
+result carrying one of the `OLLAMA_*` codes, with the Trace Pack written and
+a `backend_failure` event in it. `heimdal run` exits `2` for those codes and
+`1` for an answer that failed verification.
 
 ## `heimdal hermes doctor` (`heimdal openclaw doctor`)
 

@@ -35,6 +35,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from heimdal.core import status_codes
 from heimdal.models.base import GenerationResult, ModelBackend
 from heimdal.models.ollama import OllamaError
 
@@ -251,5 +252,6 @@ class FailoverBackend(ModelBackend):
 
         raise OllamaError(
             f"All {len(order)} endpoint(s) for role '{self.role}' failed "
-            f"({', '.join(c.name for c in order)}). Last error: {last_error}"
+            f"({', '.join(c.name for c in order)}). Last error: {last_error}",
+            code=getattr(last_error, "code", status_codes.OLLAMA_UNREACHABLE),
         )

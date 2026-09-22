@@ -44,7 +44,7 @@ from heimdal.adapters.hermes_host import handle as run_hermes
 from heimdal.adapters.openclaw_adapter import OpenClawAdapter
 from heimdal.adapters.openclaw_host import handle as run_openclaw
 from heimdal.config import load_config
-from heimdal.core import eval_runner, intake, patch_manager
+from heimdal.core import eval_runner, intake, patch_manager, status_codes
 from heimdal.core.runtime import Runtime
 from heimdal.dream import runner as dream_runner
 from heimdal.hardware import capability_matrix, role_assigner
@@ -166,7 +166,12 @@ def cmd_run(args) -> int:
         print(json.dumps(result, indent=2, default=str))
     else:
         print(adapter.from_heimdal_result(result))
-    return 0 if result["status"] in ("pass", "need_input") else 1
+    if result["status"] in ("pass", "need_input"):
+        return 0
+    # Keep the shell-visible distinction a caller had before backend
+    # outages became structured results: 1 means the answer failed
+    # verification, 2 means Heimdal could not produce one at all.
+    return 2 if result.get("code") in status_codes.BACKEND_CODES else 1
 
 
 # -- eval ------------------------------------------------------------------

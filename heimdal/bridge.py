@@ -309,6 +309,22 @@ def process_job(job_path: str, config: Config, paths: dict, defaults: dict) -> d
             started=started,
         )
 
+    # A backend outage that only surfaced mid-run comes back as a fail
+    # result rather than an exception. It is still infrastructure, not a
+    # quality verdict, so it belongs in failed/ with the other retryable
+    # failures -- not in outbox/ beside answers that were actually produced.
+    result_code = (adapter_result or {}).get("code")
+    if result_code in status_codes.BACKEND_CODES:
+        return _emit_failure(
+            processing_path, paths, base,
+            job_id=job_id, adapter=adapter,
+            code=result_code,
+            error=(adapter_result or {}).get("summary")
+            or (adapter_result or {}).get("message", "Model backend failed."),
+            suggested_fix="Check the Ollama server and retry the job.",
+            started=started,
+        )
+
     # 3. Persist result; move job to archive.
     duration_ms = round((time.time() - started) * 1000, 2)
     safe_id = _safe_basename(job_id, fallback=base.rsplit(".", 1)[0])

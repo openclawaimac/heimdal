@@ -22,6 +22,7 @@ from heimdal.core import (
     verifier,
 )
 from heimdal.core.constants import FAIL, NEED_INPUT, PASS
+from heimdal.core.model_router import ModelUnavailableError
 from heimdal.core.role_binding import resolve_role
 from heimdal.core.scheduler import WORK, Scheduler
 from heimdal.core.task_contract import build_contract
@@ -31,6 +32,7 @@ from heimdal.hardware import runtime_profile
 from heimdal.hardware.role_assigner import assigned_worker_model
 from heimdal.models.base import select_backend
 from heimdal.models.endpoint_pool import EndpointPool
+from heimdal.models.ollama import OllamaError
 from heimdal.skills.registry import SkillRegistry
 from heimdal.storage import Storage
 
@@ -144,18 +146,28 @@ class Runtime:
         trace.event("intake_ok", host=validated.get("host", {}).get("type"))
         trace.event("role_resolved", role_id=role["role_id"])
 
-        outcome = quality_factory.run_quality_factory(
-            contract,
-            role,
-            validated,
-            self.backend,
-            self.storage,
-            self.config,
-            trace,
-            model_override=self.model_override,
-            verifier_override=self.verifier_override,
-            backend_pool=self.endpoint_pool,
-        )
+        try:
+            outcome = quality_factory.run_quality_factory(
+                contract,
+                role,
+                validated,
+                self.backend,
+                self.storage,
+                self.config,
+                trace,
+                model_override=self.model_override,
+                verifier_override=self.verifier_override,
+                backend_pool=self.endpoint_pool,
+            )
+        except (OllamaError, ModelUnavailableError) as exc:
+            # The model backend never answered, so there is no draft to
+            # verify and no outcome to report. That is infrastructure, not a
+            # quality verdict -- but a host calling handle() in-process must
+            # still get a Result Envelope rather than a traceback.
+            return self._backend_failure(
+                validated=validated, contract=contract, trace=trace,
+                exc=exc, started=started,
+            )
 
         run_id = new_id("run")
         routing = outcome["routing"]
@@ -258,10 +270,19 @@ class Runtime:
         )
         trace.event("context_packet_ready", packet_id=packet["packet_id"])
 
-        routing = model_router.route(
-            contract, role, self.backend, self.config,
-            self.model_override, self.verifier_override,
-        )
+        try:
+            routing = model_router.route(
+                contract, role, self.backend, self.config,
+                self.model_override, self.verifier_override,
+            )
+        except (OllamaError, ModelUnavailableError) as exc:
+            # Same contract as a full run: a backend that cannot be reached
+            # is reported, not raised. Verification without a model is not a
+            # verdict, so this is a fail rather than a lenient pass.
+            return self._backend_failure(
+                validated=validated, contract=contract, trace=trace,
+                exc=exc, started=started,
+            )
         trace.event("routing", **routing)
 
         # Use the same per-role routing (and failover) as a full run, so
@@ -380,6 +401,51 @@ class Runtime:
                 fh.write(outcome["output_text"])
             artifacts.append({"type": "response", "path": response_path})
         return artifacts
+
+    def _backend_failure(self, *, validated, contract, trace, exc, started) -> dict:
+        """Turn a dead model backend into a FAIL Result Envelope.
+
+        The Trace Pack is still written: it holds every event up to the
+        failure, which is what makes the outage diagnosable afterwards. The
+        Repro Pack is necessarily thin -- no models ran, so there is nothing
+        to reproduce beyond the contract and the hardware.
+        """
+        code = getattr(exc, "code", status_codes.OLLAMA_UNREACHABLE)
+        trace.event("backend_failure", code=code, error=str(exc)[:300])
+        metrics = {
+            "duration_ms": round((time.time() - started) * 1000, 2),
+            "backend": self.backend.name,
+            "assignment_source": self.assignment_source,
+            "runtime_profile": self.runtime_profile["name"],
+            "profile_source": self.runtime_profile["source"],
+            "profile_limits": self.runtime_profile["limits"],
+            "endpoint_routing": self.endpoint_pool.routing_map(),
+            "endpoint_failovers": self.endpoint_pool.failover_count(),
+            "endpoint_health": self.endpoint_pool.health_snapshot(),
+        }
+        repro = repro_trace.build_repro_pack(
+            models=[],
+            params={},
+            hashes={"contract": sha256_obj(contract)},
+            hardware_profile=self.hardware_profile,
+        )
+        trace_pack = trace.build(FAIL, metrics)
+        pack_paths = repro_trace.write_packs(
+            self.storage, self.config, repro, trace_pack
+        )
+        return self._envelope(
+            validated=validated,
+            contract=contract,
+            status=FAIL,
+            code=code,
+            needed_inputs=[],
+            message=str(exc),
+            artifacts=[],
+            questions=[],
+            repro={"id": repro["id"], "path": pack_paths["repro_pack"]},
+            trace={"id": trace_pack["id"], "path": pack_paths["trace_pack"]},
+            metrics=metrics,
+        )
 
     @staticmethod
     def _message(outcome: dict) -> str:

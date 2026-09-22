@@ -19,9 +19,13 @@ VERIFIER_SEMANTIC_FAIL = "VERIFIER_SEMANTIC_FAIL"
 VERIFIER_RULE_FAIL = "VERIFIER_RULE_FAIL"
 SCHEMA_INVALID = "SCHEMA_INVALID"
 
-# Backend / model availability.
+# Backend / model availability. These are distinguished because a host acts
+# on each differently: pull a model, start the server, retry smaller, or
+# report a server-side fault.
 OLLAMA_MODEL_MISSING = "OLLAMA_MODEL_MISSING"
 OLLAMA_UNREACHABLE = "OLLAMA_UNREACHABLE"
+OLLAMA_TIMEOUT = "OLLAMA_TIMEOUT"
+OLLAMA_REQUEST_FAILED = "OLLAMA_REQUEST_FAILED"
 
 # Callback delivery.
 CALLBACK_DELIVERY_FAILED = "CALLBACK_DELIVERY_FAILED"
@@ -40,11 +44,24 @@ ALL_CODES = [
     SCHEMA_INVALID,
     OLLAMA_MODEL_MISSING,
     OLLAMA_UNREACHABLE,
+    OLLAMA_TIMEOUT,
+    OLLAMA_REQUEST_FAILED,
     CALLBACK_DELIVERY_FAILED,
     JOB_SCHEMA_INVALID,
     ADAPTER_UNSUPPORTED,
     INTERNAL_ERROR,
 ]
+
+
+#: Codes that mean "the model backend did not answer", as opposed to "the
+#: answer was produced but failed verification". Hosts can treat this set as
+#: retryable / infrastructure rather than a quality outcome.
+BACKEND_CODES = frozenset({
+    OLLAMA_MODEL_MISSING,
+    OLLAMA_UNREACHABLE,
+    OLLAMA_TIMEOUT,
+    OLLAMA_REQUEST_FAILED,
+})
 
 
 def fail_code(verification: dict) -> str:

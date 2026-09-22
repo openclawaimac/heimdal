@@ -64,6 +64,10 @@ class CLIAdapter(HostAdapter):
             f"task   : {result['task_id']}",
             f"message: {result['message']}",
         ]
+        # The machine-readable code only tells the reader something new when
+        # the run did not pass.
+        if result.get("code") and result["status"] != "pass":
+            lines.insert(1, f"code   : {result['code']}")
         if result.get("questions"):
             lines.append("questions:")
             lines += [f"  - {q}" for q in result["questions"]]

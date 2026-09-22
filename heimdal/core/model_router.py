@@ -7,6 +7,7 @@ model, retrieval requirement, verifier strictness/backend, and repair budget
 
 from __future__ import annotations
 
+from heimdal.core import status_codes
 from heimdal.core.constants import HYBRID, LENIENT, RULE_BASED, STANDARD, STRICT
 from heimdal.models.base import select_generative_model
 from heimdal.models.offline import OFFLINE_MODEL, OfflineBackend
@@ -24,7 +25,16 @@ _BUDGET_RANK = {level: index for index, level in enumerate(BUDGET_BEHAVIOUR)}
 
 
 class ModelUnavailableError(RuntimeError):
-    """Raised when no usable model can be resolved for a profile."""
+    """Raised when no usable model can be resolved for a profile.
+
+    Carries a machine-readable ``code``: a model that is genuinely not
+    installed is a different problem from a server that never answered the
+    question, and the two have different fixes.
+    """
+
+    def __init__(self, message: str, code: str = status_codes.OLLAMA_MODEL_MISSING):
+        super().__init__(message)
+        self.code = code
 
 
 def _budget_at_least(level: str, minimum: str) -> bool:
@@ -48,12 +58,14 @@ def resolve_run_verifier(config, backend, verifier_override: str | None = None):
         return RULE_BASED, None
     installed = None if backend.name == OfflineBackend.name else set(backend.list_models())
     semantic_model = config.verifier.get("semantic_verifier_model") or _resolve_model(
-        "verifier", installed, config
+        "verifier", installed, config, backend
     )
     return HYBRID, semantic_model
 
 
-def _resolve_model(profile_name: str, installed: set[str] | None, config) -> str:
+def _resolve_model(
+    profile_name: str, installed: set[str] | None, config, backend=None,
+) -> str:
     """Resolve a concrete model for a profile.
 
     Prefers an installed manifest candidate; otherwise falls back to any
@@ -68,11 +80,23 @@ def _resolve_model(profile_name: str, installed: set[str] | None, config) -> str
     fallback = select_generative_model(config, sorted(installed))
     if fallback:
         return fallback
+    # An empty model list has two very different causes: nothing is
+    # installed, or nobody answered when we asked. Telling the user to
+    # `ollama pull` when the server is down sends them the wrong way.
+    if not installed and backend is not None and not backend.is_available():
+        base_url = getattr(backend, "base_url", "the configured base_url")
+        raise ModelUnavailableError(
+            f"Ollama is not reachable at {base_url}, so no model could be "
+            f"resolved for profile '{profile_name}'. Is the Ollama server "
+            f"running?",
+            code=status_codes.OLLAMA_UNREACHABLE,
+        )
     raise ModelUnavailableError(
         f"No model for profile '{profile_name}' is installed in Ollama. "
         f"Candidates: {candidates or '(none configured)'}. "
         f"Installed: {sorted(installed) or '(none)'}. "
-        f"Run: ollama pull {candidates[0] if candidates else 'qwen2.5:7b'}"
+        f"Run: ollama pull {candidates[0] if candidates else 'qwen2.5:7b'}",
+        code=status_codes.OLLAMA_MODEL_MISSING,
     )
 
 
@@ -110,7 +134,7 @@ def route(
     if model_override:
         worker_model = model_override
     else:
-        worker_model = _resolve_model(worker_profile, installed, config)
+        worker_model = _resolve_model(worker_profile, installed, config, backend)
 
     # Verification is rule-based by default. Hybrid adds a model-based semantic
     # verifier for B2-B4 tasks; the offline backend mocks it deterministically.
@@ -122,7 +146,7 @@ def route(
     if hybrid:
         semantic_verifier_model = (
             config.verifier.get("semantic_verifier_model")
-            or _resolve_model("verifier", installed, config)
+            or _resolve_model("verifier", installed, config, backend)
         )
     else:
         semantic_verifier_model = None
@@ -132,7 +156,7 @@ def route(
     # when no brain candidate is installed so planning still happens.
     if brain_profile:
         try:
-            brain_model = _resolve_model("brain", installed, config)
+            brain_model = _resolve_model("brain", installed, config, backend)
         except ModelUnavailableError:
             brain_model = worker_model
     else:

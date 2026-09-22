@@ -108,6 +108,21 @@ host-safe relative refs — never absolute paths, raw prompts, the full Context
 Packet, or the internal sub-agent graph. `heimdal hermes capabilities` reports
 what the host integration supports.
 
+### When the model backend is down
+
+A dead backend is infrastructure, not a quality verdict, so it never escapes
+as an exception into the host process. `run_envelope()` (and therefore
+`handle()`) returns a normal `fail` Result Envelope carrying one of
+`OLLAMA_UNREACHABLE`, `OLLAMA_TIMEOUT`, `OLLAMA_MODEL_MISSING` or
+`OLLAMA_REQUEST_FAILED` — each implying a different fix: start the server,
+wait or downsize, pull the model, investigate a server-side fault. The Trace
+Pack is still written, with a `backend_failure` event, so the outage stays
+diagnosable afterwards.
+
+`heimdal run` exits `2` for those codes and `1` when an answer was produced
+but failed verification. Bugs elsewhere in the pipeline still raise, so a
+genuine defect is never masked as an outage.
+
 ### Backend and model selection
 
 `run` and `eval` accept `--backend ollama|offline` and `--model <name>` to force

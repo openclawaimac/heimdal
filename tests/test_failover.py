@@ -15,6 +15,7 @@ import urllib.error
 
 from tests.helpers import temp_config
 
+from heimdal.core import status_codes
 from heimdal.core.runtime import Runtime
 from heimdal.models.base import GenerationResult, ModelBackend
 from heimdal.models.endpoint_pool import EndpointPool
@@ -448,14 +449,21 @@ class RunSurvivesDeadEndpointTests(unittest.TestCase):
         self.assertNotIn("endpoint_failover", names)
         self.assertNotIn("endpoint_unhealthy", names)
 
-    def test_whole_cluster_down_still_fails_the_run(self):
-        # Failover must not paper over a genuinely dead cluster.
+    def test_whole_cluster_down_fails_the_run_with_a_host_visible_code(self):
+        # Failover must not paper over a genuinely dead cluster -- but the
+        # host gets a Result Envelope, not a traceback.
         runtime, _ = self._runtime_with(
             AnsweringBackend("gpu0", fail_first=99),
             AnsweringBackend("gpu1", fail_first=99),
         )
-        with self.assertRaises(OllamaError):
-            runtime.run_envelope(_envelope("fo-4"))
+        result = runtime.run_envelope(_envelope("fo-4"))
+        self.assertEqual(result["status"], "fail")
+        self.assertIn(result["code"], status_codes.BACKEND_CODES)
+        # The trace still lands, so the outage is diagnosable afterwards.
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        names = [e["name"] for e in trace["events"]]
+        self.assertIn("backend_failure", names)
+        self.assertIn("endpoint_unhealthy", names)
 
     def test_dead_verifier_endpoint_reroutes_to_the_worker_gpu(self):
         # gpu1 serves only the semantic verifier. When it dies, `auto` should

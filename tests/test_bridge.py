@@ -317,3 +317,48 @@ class BridgeCLITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BridgeBackendOutageTests(unittest.TestCase):
+    """An outage that only surfaces mid-run is infrastructure, not an answer."""
+
+    def setUp(self):
+        self.config = temp_config(tempfile.mkdtemp())
+        self.paths = bridge.ensure_dirs(self.config)
+        self.defaults = {"backend": "offline", "model": None, "verifier": None}
+
+    def test_backend_failure_lands_in_failed_not_outbox(self):
+        from unittest import mock
+        from heimdal.core import status_codes
+        from heimdal.models.ollama import OllamaError
+
+        def dead_generate(self, prompt, **kwargs):
+            raise OllamaError("Ollama went away mid-run.",
+                              code=status_codes.OLLAMA_UNREACHABLE)
+
+        _drop(self.paths["inbox"], "job-down.ready.json", _hermes_job("job-down"))
+        with mock.patch("heimdal.models.offline.OfflineBackend.generate",
+                        dead_generate):
+            reports = bridge.process_cycle(
+                self.config, self.paths, self.defaults, 16,
+            )
+
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["code"], status_codes.OLLAMA_UNREACHABLE)
+        # Nothing in outbox; the job and a machine-readable error in failed/.
+        self.assertEqual(os.listdir(self.paths["outbox"]), [])
+        failed = sorted(os.listdir(self.paths["failed"]))
+        self.assertIn("job-down.error.json", failed)
+        self.assertIn("job-down.ready.json", failed)
+        error = Storage.read_json(
+            os.path.join(self.paths["failed"], "job-down.error.json")
+        )
+        self.assertEqual(error["code"], status_codes.OLLAMA_UNREACHABLE)
+
+    def test_a_verification_failure_still_goes_to_outbox(self):
+        # Only backend codes divert; a quality verdict is a real result.
+        _drop(self.paths["inbox"], "job-ok.ready.json", _hermes_job("job-ok"))
+        reports = bridge.process_cycle(self.config, self.paths, self.defaults, 16)
+        self.assertEqual(reports[0]["status"], "pass")
+        self.assertEqual(os.listdir(self.paths["failed"]), [])
+        self.assertEqual(os.listdir(self.paths["outbox"]), ["job-ok.result.json"])
