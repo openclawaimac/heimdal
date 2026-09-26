@@ -89,6 +89,13 @@ result carrying one of the `OLLAMA_*` codes, with the Trace Pack written and
 a `backend_failure` event in it. `heimdal run` exits `2` for those codes and
 `1` for an answer that failed verification.
 
+`heimdal eval run` applies the same split. Cases that hit the backend score
+`error` rather than `fail`; the summary carries `backend_degraded`,
+`backend_failures` and `backend_codes`; the run is never flagged as a
+regression, never becomes the regression baseline, and never satisfies the
+patch promotion gate. Exit `2` when degraded, `1` when must-pass evals
+genuinely failed.
+
 ## `heimdal hermes doctor` (`heimdal openclaw doctor`)
 
 Integration diagnostics. Validates the payload, checks storage writability,

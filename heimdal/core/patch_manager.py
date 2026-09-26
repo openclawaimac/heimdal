@@ -236,11 +236,22 @@ def eval_patch(config, patch: dict, runtime, *, targeted: bool = False) -> dict:
     )
     candidate = eval_runner.run_evals(runtime, categories=categories)
 
+    # A baseline taken while the backend was down is a low bar the candidate
+    # would clear on availability alone, which would read as an improvement
+    # and promote a patch on false evidence.
+    if (baseline or {}).get("backend_degraded"):
+        baseline = None
     baseline_rate = (baseline or {}).get("pass_rate")
     candidate_rate = candidate["pass_rate"]
     regressions: list[str] = []
     improvements: list[str] = []
-    if baseline_rate is not None:
+    if candidate.get("backend_degraded"):
+        regressions.append(
+            "eval run was degraded by a model backend outage "
+            f"({', '.join(candidate.get('backend_codes') or ['unknown'])}); "
+            "its pass rate measures availability, not quality."
+        )
+    elif baseline_rate is not None:
         if candidate_rate + 1e-9 < baseline_rate - 0.01:
             regressions.append(
                 f"pass_rate {candidate_rate} < baseline {baseline_rate} - 1%"
@@ -303,6 +314,7 @@ def eval_patch(config, patch: dict, runtime, *, targeted: bool = False) -> dict:
             "eval_run_id": candidate["eval_run_id"],
             "pass_rate": candidate_rate,
             "must_pass_all_passed": candidate.get("must_pass_all_passed"),
+            "backend_degraded": bool(candidate.get("backend_degraded")),
         },
         "targeted": targeted,
         "categories_run": candidate.get("categories_run", []),
@@ -345,6 +357,11 @@ def can_promote_to_stable(patch: dict, eval_summary: dict | None) -> tuple[bool,
     """A patch may enter ``stable`` only if its eval run passed must-pass evals."""
     if eval_summary is None:
         return False, "No eval run attached; stable promotion requires a passing eval run."
+    if eval_summary.get("backend_degraded"):
+        return False, (
+            "Eval run was degraded by a model backend outage; rerun it "
+            "against a healthy backend before promoting."
+        )
     if not eval_summary.get("must_pass_all_passed", False):
         return False, "Eval run did not pass all must-pass evals."
     if eval_summary.get("regressed", False):

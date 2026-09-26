@@ -123,6 +123,14 @@ diagnosable afterwards.
 but failed verification. Bugs elsewhere in the pipeline still raise, so a
 genuine defect is never masked as an outage.
 
+The eval suite keeps the same separation. A case whose backend never answered
+is scored `error`, not `fail`, and the run is marked `backend_degraded` with
+the codes it saw. Such a run measures availability rather than quality, so it
+is never reported as a regression, is skipped when picking the regression
+baseline, and cannot promote a patch — otherwise its pass rate of 0.0 would
+become a bar that any later run clears, hiding a real regression behind it.
+`heimdal eval run` exits `2` when degraded.
+
 ### Backend and model selection
 
 `run` and `eval` accept `--backend ollama|offline` and `--model <name>` to force

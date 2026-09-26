@@ -11,10 +11,11 @@ import json
 import os
 
 from heimdal import __version__
-from heimdal.core import model_router
+from heimdal.core import model_router, status_codes
 from heimdal.core.constants import PASS
 from heimdal.core.runtime import Runtime
 from heimdal.ids import new_id, now_compact, now_iso, repo_root
+from heimdal.models.ollama import OllamaError
 from heimdal.storage import Storage
 
 EVAL_DIR = "eval"
@@ -73,10 +74,13 @@ def load_suite(eval_dir: str | None = None) -> dict[str, list[dict]]:
 
 
 def _previous_pass_rate(runtime: Runtime) -> float | None:
-    """Pass rate of the most recent FULL eval run, for regression detection.
+    """Pass rate of the most recent FULL, healthy eval run.
 
     Targeted (subset) runs are skipped -- their pass_rate has a different
-    denominator and would distort the comparison for a later full run.
+    denominator and would distort the comparison for a later full run. Runs
+    degraded by a backend outage are skipped too: their pass rate measures
+    whether Ollama was up, not whether Heimdal got worse, and adopting one
+    as the baseline would hide a real regression behind a low bar.
     """
     runs_dir = runtime.storage.path("eval_runs")
     if not os.path.isdir(runs_dir):
@@ -91,7 +95,7 @@ def _previous_pass_rate(runtime: Runtime) -> float | None:
             data = Storage.read_json(path)
         except (OSError, json.JSONDecodeError):
             continue
-        if data.get("targeted"):
+        if data.get("targeted") or data.get("backend_degraded"):
             continue
         return data.get("pass_rate")
     return None
@@ -105,9 +109,20 @@ def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
     the run is hybrid, so sampling a single task would mislead).
     """
     backend = runtime.backend.name
-    verifier_backend, semantic_verifier_model = model_router.resolve_run_verifier(
-        runtime.config, runtime.backend, runtime.verifier_override
-    )
+    # Resolving the run-level verifier asks the backend what it has
+    # installed, so it fails when the backend is down. That must not discard
+    # a whole suite's results at the final step -- record it and move on.
+    metadata_error = None
+    try:
+        verifier_backend, semantic_verifier_model = model_router.resolve_run_verifier(
+            runtime.config, runtime.backend, runtime.verifier_override
+        )
+    except (OllamaError, model_router.ModelUnavailableError) as exc:
+        verifier_backend, semantic_verifier_model = "unknown", None
+        metadata_error = {
+            "code": getattr(exc, "code", status_codes.OLLAMA_UNREACHABLE),
+            "message": str(exc)[:300],
+        }
     return {
         "heimdal_version": __version__,
         "backend": backend,
@@ -119,6 +134,7 @@ def _runtime_metadata(runtime: Runtime, sample_metrics: dict) -> dict:
         ),
         "manifest_path": runtime.config.manifest_path,
         "platform": runtime.hardware_profile,
+        "metadata_error": metadata_error,
     }
 
 
@@ -147,19 +163,29 @@ def run_evals(
     results: list[dict] = []
     category_stats: dict[str, dict] = {}
     sample_metrics: dict = {}
+    backend_codes: set[str] = set()
     for category, cases in suite.items():
         passed = 0
         for case in cases:
             envelope = _build_envelope(case, category)
+            code = None
             try:
                 result = runtime.run_envelope(envelope)
                 actual = result["status"]
                 error = None
-                if not sample_metrics:
+                code = result.get("code")
+                if code in status_codes.BACKEND_CODES:
+                    # The backend never answered, so this case measured
+                    # nothing. Scoring it as a quality fail would read as
+                    # "the model got worse" when Ollama was simply down.
+                    backend_codes.add(code)
+                    actual = "error"
+                    error = result.get("message", code)
+                elif not sample_metrics:
                     sample_metrics = result.get("metrics", {})
             except Exception as exc:  # noqa: BLE001 - eval must not crash the suite
                 actual = "error"
-                error = str(exc)
+                error = f"{type(exc).__name__}: {exc}"
             expected = case.get("expect_status", PASS)
             ok = actual == expected
             passed += int(ok)
@@ -170,6 +196,7 @@ def run_evals(
                     "expected": expected,
                     "actual": actual,
                     "passed": ok,
+                    "code": code,
                     "error": error,
                 }
             )
@@ -190,14 +217,23 @@ def run_evals(
         must_pass and must_pass["total"] > 0
         and must_pass["passed"] == must_pass["total"]
     )
+    runtime_metadata = _runtime_metadata(runtime, sample_metrics)
+    # A run whose backend fell over measured availability, not quality.
+    # Comparing it to anything -- or letting anything compare to it -- would
+    # report a regression that never happened.
+    backend_degraded = (
+        bool(backend_codes) or runtime_metadata["metadata_error"] is not None
+    )
     regressed = bool(
-        prior_rate is not None and pass_rate < prior_rate - REGRESSION_TOLERANCE
+        not backend_degraded
+        and prior_rate is not None
+        and pass_rate < prior_rate - REGRESSION_TOLERANCE
     )
 
     summary = {
         "eval_run_id": new_id("evalrun"),
         "timestamp": now_iso(),
-        "metadata": _runtime_metadata(runtime, sample_metrics),
+        "metadata": runtime_metadata,
         "total": total,
         "passed": total_passed,
         "pass_rate": pass_rate,
@@ -207,6 +243,11 @@ def run_evals(
         "must_pass_all_passed": must_pass_all,
         "prior_pass_rate": prior_rate,
         "regressed": regressed,
+        "backend_degraded": backend_degraded,
+        "backend_failures": sum(
+            1 for r in results if r.get("code") in status_codes.BACKEND_CODES
+        ),
+        "backend_codes": sorted(backend_codes),
         "results": results,
     }
 

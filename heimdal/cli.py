@@ -186,7 +186,9 @@ def cmd_eval(args) -> int:
     summary = eval_runner.run_evals(runtime)
     if args.json:
         print(json.dumps(summary, indent=2, default=str))
-        return 0
+        return 2 if summary["backend_degraded"] else (
+            0 if summary["must_pass_all_passed"] else 1
+        )
     print(f"Eval run {summary['eval_run_id']}")
     print(f"  total      : {summary['total']}")
     print(f"  passed     : {summary['passed']}")
@@ -199,7 +201,19 @@ def cmd_eval(args) -> int:
         )
     print(f"  must_pass_all_passed: {summary['must_pass_all_passed']}")
     print(f"  regressed  : {summary['regressed']}")
+    if summary["backend_degraded"]:
+        codes = ", ".join(summary["backend_codes"]) or "backend error"
+        print(f"  DEGRADED   : {summary['backend_failures']} case(s) hit the "
+              f"model backend ({codes}).")
+        print("               This run measures availability, not quality; it "
+              "is excluded")
+        print("               from the regression baseline. Rerun against a "
+              "healthy backend.")
     print(f"  summary    : {summary['summary_path']}")
+    # An outage is not a quality verdict, so it gets its own exit code --
+    # the same split `heimdal run` uses.
+    if summary["backend_degraded"]:
+        return 2
     return 0 if summary["must_pass_all_passed"] else 1
 
 
