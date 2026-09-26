@@ -154,9 +154,13 @@ A degraded run is visible rather than just slower:
   request, which ones were tried and failed, which were skipped for
   having an open circuit, and whether the winner was borrowed from
   another role.
-- `metrics.endpoint_failovers` counts every request that did not land on
-  its configured first choice — including ones where the first choice was
-  skipped rather than tried. `0` means the run was not degraded at all.
+- `metrics.endpoint_failovers` counts every request in *this run* that did
+  not land on its configured first choice — including ones where the first
+  choice was skipped rather than tried. `0` means the run was not degraded
+  at all. A host is encouraged to reuse one `Runtime` across many tasks, so
+  this is reported as a per-run delta; the circuit-breaker ledger behind it
+  is deliberately session-scoped, and `metrics.endpoint_health` (present on
+  a failed run) is that cumulative view.
 
 ## What this does not do
 

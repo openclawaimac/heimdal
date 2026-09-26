@@ -143,6 +143,9 @@ class Runtime:
             )
 
         trace = repro_trace.TraceBuilder(contract["task_id"])
+        # The pool's failover tally is session-scoped and a Runtime may be
+        # reused across many tasks, so report the delta this run caused.
+        failovers_before = self.endpoint_pool.failover_count()
         trace.event("intake_ok", host=validated.get("host", {}).get("type"))
         trace.event("role_resolved", role_id=role["role_id"])
 
@@ -166,7 +169,7 @@ class Runtime:
             # still get a Result Envelope rather than a traceback.
             return self._backend_failure(
                 validated=validated, contract=contract, trace=trace,
-                exc=exc, started=started,
+                exc=exc, started=started, failovers_before=failovers_before,
             )
 
         run_id = new_id("run")
@@ -187,7 +190,9 @@ class Runtime:
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
             "endpoint_routing": self.endpoint_pool.routing_map(),
-            "endpoint_failovers": self.endpoint_pool.failover_count(),
+            "endpoint_failovers": (
+                self.endpoint_pool.failover_count() - failovers_before
+            ),
         }
 
         repro = repro_trace.build_repro_pack(
@@ -261,6 +266,7 @@ class Runtime:
         contract = build_contract(validated, role, self.config, profile_overrides=runtime_profile.task_contract_overrides(self.runtime_profile["limits"]))
 
         trace = repro_trace.TraceBuilder(contract["task_id"])
+        failovers_before = self.endpoint_pool.failover_count()
         trace.event("verify_intake_ok", host=validated.get("host", {}).get("type"))
         trace.event("role_resolved", role_id=role["role_id"])
         trace.event("contract_ready", contract_id=contract["contract_id"])
@@ -281,7 +287,7 @@ class Runtime:
             # verdict, so this is a fail rather than a lenient pass.
             return self._backend_failure(
                 validated=validated, contract=contract, trace=trace,
-                exc=exc, started=started,
+                exc=exc, started=started, failovers_before=failovers_before,
             )
         trace.event("routing", **routing)
 
@@ -329,7 +335,9 @@ class Runtime:
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
             "endpoint_routing": self.endpoint_pool.routing_map(),
-            "endpoint_failovers": self.endpoint_pool.failover_count(),
+            "endpoint_failovers": (
+                self.endpoint_pool.failover_count() - failovers_before
+            ),
         }
         repro = repro_trace.build_repro_pack(
             models=models,
@@ -402,7 +410,9 @@ class Runtime:
             artifacts.append({"type": "response", "path": response_path})
         return artifacts
 
-    def _backend_failure(self, *, validated, contract, trace, exc, started) -> dict:
+    def _backend_failure(
+        self, *, validated, contract, trace, exc, started, failovers_before=0,
+    ) -> dict:
         """Turn a dead model backend into a FAIL Result Envelope.
 
         The Trace Pack is still written: it holds every event up to the
@@ -420,7 +430,9 @@ class Runtime:
             "profile_source": self.runtime_profile["source"],
             "profile_limits": self.runtime_profile["limits"],
             "endpoint_routing": self.endpoint_pool.routing_map(),
-            "endpoint_failovers": self.endpoint_pool.failover_count(),
+            "endpoint_failovers": (
+                self.endpoint_pool.failover_count() - failovers_before
+            ),
             "endpoint_health": self.endpoint_pool.health_snapshot(),
         }
         repro = repro_trace.build_repro_pack(

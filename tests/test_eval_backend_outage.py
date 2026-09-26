@@ -175,6 +175,26 @@ class PatchEvalBaselineTests(unittest.TestCase):
             "rollback": "Drop the appended line.",
         }
 
+    _HEALTHY_CANDIDATE = {
+        "eval_run_id": "evalrun_candidate",
+        "pass_rate": 1.0,
+        "must_pass_all_passed": True,
+        "backend_degraded": False,
+        "categories_run": ["must_pass", "smoke"],
+    }
+
+    def _eval_against(self, runtime, candidate=None):
+        """Run eval_patch's comparison logic without running the suite.
+
+        `targeted=False` is essential: a targeted run discards the baseline
+        unconditionally, so it cannot exercise baseline selection at all.
+        """
+        with mock.patch.object(patch_manager.eval_runner, "run_evals",
+                               return_value=candidate or self._HEALTHY_CANDIDATE):
+            return patch_manager.eval_patch(
+                runtime.config, self._patch(), runtime, targeted=False,
+            )
+
     def test_a_degraded_baseline_is_not_counted_as_an_improvement(self):
         runtime = _runtime()
         # The only prior run was an outage: pass_rate 0.0. A healthy
@@ -182,19 +202,85 @@ class PatchEvalBaselineTests(unittest.TestCase):
         _write_summary(runtime, "degraded", pass_rate=0.0, targeted=False,
                        backend_degraded=True, must_pass_all_passed=False)
 
-        report = patch_manager.eval_patch(
-            runtime.config, self._patch(), runtime, targeted=True,
-        )
+        report = self._eval_against(runtime)
         self.assertIsNone(report["baseline_eval"])
         self.assertEqual(report["improvements"], [])
 
+    def test_a_healthy_baseline_is_still_compared_against(self):
+        # Guards the test above from passing for the wrong reason: the same
+        # call path does find and use a baseline when one is trustworthy.
+        runtime = _runtime()
+        _write_summary(runtime, "healthy", pass_rate=0.5, targeted=False,
+                       backend_degraded=False, must_pass_all_passed=True,
+                       eval_run_id="evalrun_baseline")
+
+        report = self._eval_against(runtime)
+        self.assertIsNotNone(report["baseline_eval"])
+        self.assertEqual(report["baseline_eval"]["pass_rate"], 0.5)
+        self.assertTrue(report["improvements"])
+
     def test_a_degraded_candidate_is_rejected_outright(self):
         runtime = _runtime()
-        with mock.patch("heimdal.models.offline.OfflineBackend.generate", _outage):
-            report = patch_manager.eval_patch(
-                runtime.config, self._patch(), runtime, targeted=True,
-            )
+        report = self._eval_against(runtime, candidate={
+            "eval_run_id": "evalrun_degraded",
+            "pass_rate": 0.0,
+            "must_pass_all_passed": False,
+            "backend_degraded": True,
+            "backend_codes": [status_codes.OLLAMA_UNREACHABLE],
+            "categories_run": ["must_pass"],
+        })
         self.assertEqual(report["eval_recommendation"], "reject")
         self.assertEqual(report["recommendation"], "reject")
         self.assertIn("outage", report["reason"])
         self.assertTrue(report["candidate_eval"]["backend_degraded"])
+
+
+class EvalCLIExitCodeTests(unittest.TestCase):
+    """An outage and a failed answer must stay distinguishable to a shell."""
+
+    def setUp(self):
+        from tests.helpers import write_temp_manifest
+        self.manifest = write_temp_manifest(tempfile.mkdtemp(), tempfile.mkdtemp())
+
+    def _eval(self, extra=()) -> tuple[int, str]:
+        import contextlib
+        import io
+        from heimdal.cli import main
+        buf = io.StringIO()
+        argv = ["eval", "run", "--backend", "offline", "--manifest", self.manifest]
+        with contextlib.redirect_stdout(buf):
+            code = main(argv + list(extra))
+        return code, buf.getvalue()
+
+    def test_a_degraded_run_exits_2(self):
+        with mock.patch("heimdal.models.offline.OfflineBackend.generate", _outage):
+            code, out = self._eval()
+        self.assertEqual(code, 2)
+        self.assertIn("DEGRADED", out)
+        self.assertIn(status_codes.OLLAMA_UNREACHABLE, out)
+
+    def test_a_degraded_run_exits_2_in_json_mode_too(self):
+        with mock.patch("heimdal.models.offline.OfflineBackend.generate", _outage):
+            code, out = self._eval(["--json"])
+        self.assertEqual(code, 2)
+        self.assertTrue(json.loads(out)["backend_degraded"])
+
+    def test_a_healthy_run_exits_0(self):
+        code, out = self._eval()
+        self.assertEqual(code, 0)
+        self.assertNotIn("DEGRADED", out)
+
+    def test_a_genuine_must_pass_failure_exits_1(self):
+        # Not an outage: the suite ran and the answers were wrong.
+        real = eval_runner.run_evals
+
+        def failing(*args, **kwargs):
+            summary = real(*args, **kwargs)
+            summary["must_pass_all_passed"] = False
+            summary["backend_degraded"] = False
+            return summary
+
+        with mock.patch.object(eval_runner, "run_evals", failing):
+            code, out = self._eval()
+        self.assertEqual(code, 1)
+        self.assertNotIn("DEGRADED", out)

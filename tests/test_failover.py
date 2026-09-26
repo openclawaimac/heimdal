@@ -214,6 +214,27 @@ class FailoverBackendTests(unittest.TestCase):
         backend = FailoverBackend("worker", _chain(dead, spare), EndpointHealth())
         self.assertEqual(backend.generate("hi", model="m").text, "answer from gpu1")
 
+    def test_a_missing_model_fails_over_to_an_endpoint_that_has_it(self):
+        # Documented in docs/MULTI_GPU.md: a 404 is worth rerouting, because
+        # another node may well have the model pulled.
+        missing = OllamaError("model 'x' is not installed (HTTP 404)",
+                              code=status_codes.OLLAMA_MODEL_MISSING)
+        without, with_it = StubBackend("gpu0", missing), StubBackend("gpu1")
+        backend = FailoverBackend(
+            "worker", _chain(without, with_it), EndpointHealth(),
+        )
+        self.assertEqual(backend.generate("hi", model="m").text, "answer from gpu1")
+
+    def test_a_successful_generate_never_health_checks_first(self):
+        # Documented as a non-goal: endpoints are not probed ahead of a run,
+        # so the happy path costs no extra round trips.
+        good = StubBackend("gpu0")
+        probed = []
+        good.is_available = lambda: probed.append(1) or True
+        backend = FailoverBackend("worker", _chain(good), EndpointHealth())
+        backend.generate("hi", model="m")
+        self.assertEqual(probed, [])
+
     def test_unrelated_errors_are_not_swallowed(self):
         # A bug in prompt construction must surface, not be retried away.
         broken = StubBackend("gpu0", ValueError("bad prompt"))
@@ -448,6 +469,33 @@ class RunSurvivesDeadEndpointTests(unittest.TestCase):
         names = [e["name"] for e in trace["events"]]
         self.assertNotIn("endpoint_failover", names)
         self.assertNotIn("endpoint_unhealthy", names)
+
+    def test_failover_metric_is_per_run_not_cumulative(self):
+        # Hosts are told to reuse one Runtime across tasks, and the health
+        # ledger is deliberately session-scoped. The metric must still
+        # describe THIS run, or "0 means not degraded" stops being true.
+        gpu0 = AnsweringBackend("gpu0", fail_first=1)  # fails exactly once
+        runtime, pool = self._runtime_with(gpu0, AnsweringBackend("gpu1"))
+
+        per_run = [
+            runtime.run_envelope(_envelope(f"reuse-{i}"))["metrics"][
+                "endpoint_failovers"
+            ]
+            for i in range(4)
+        ]
+        # Every run is served by the spare (gpu0's circuit stays open), so
+        # each run has exactly one reroute -- not one, two, three, four.
+        self.assertEqual(per_run, [1, 1, 1, 1])
+        # The pool's own tally does keep accumulating; that is the ledger.
+        self.assertEqual(pool.failover_count(), 4)
+
+    def test_a_healthy_reused_runtime_keeps_reporting_zero(self):
+        runtime, _ = self._runtime_with(
+            AnsweringBackend("gpu0"), AnsweringBackend("gpu1"),
+        )
+        for i in range(3):
+            result = runtime.run_envelope(_envelope(f"clean-{i}"))
+            self.assertEqual(result["metrics"]["endpoint_failovers"], 0)
 
     def test_whole_cluster_down_fails_the_run_with_a_host_visible_code(self):
         # Failover must not paper over a genuinely dead cluster -- but the
