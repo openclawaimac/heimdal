@@ -119,9 +119,17 @@ wait or downsize, pull the model, investigate a server-side fault. The Trace
 Pack is still written, with a `backend_failure` event, so the outage stays
 diagnosable afterwards.
 
-`heimdal run` exits `2` for those codes and `1` when an answer was produced
-but failed verification. Bugs elsewhere in the pipeline still raise, so a
-genuine defect is never masked as an outage.
+`heimdal run`, `heimdal verify`, `heimdal hermes run` and
+`heimdal openclaw run` all exit `2` for those codes and `1` when an answer
+was produced but failed verification. Bugs elsewhere in the pipeline still
+raise, so a genuine defect is never masked as an outage. Anything the
+Ollama server says is stripped of absolute paths before it reaches a host
+result.
+
+In hybrid mode the deterministic gate stays decisive, so a dead *semantic
+verifier* does not fail the run — but `metrics.semantic_verifier_unavailable`
+names the code, because an answer that passed without being checked must
+not be mistaken for one that was.
 
 The eval suite keeps the same separation. A case whose backend never answered
 is scored `error`, not `fail`, and the run is marked `backend_degraded` with
@@ -129,7 +137,8 @@ the codes it saw. Such a run measures availability rather than quality, so it
 is never reported as a regression, is skipped when picking the regression
 baseline, and cannot promote a patch — otherwise its pass rate of 0.0 would
 become a bar that any later run clears, hiding a real regression behind it.
-`heimdal eval run` exits `2` when degraded.
+`heimdal eval run` exits `2` when degraded, and Dream Mode skips such runs
+entirely rather than mining an outage as a pile of quality failures.
 
 ### Backend and model selection
 

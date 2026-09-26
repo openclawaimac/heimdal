@@ -13,6 +13,8 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from heimdal.core import status_codes
+
 # Failure-pattern categories per the v0.4.0 spec.
 CATEGORIES = (
     "missing_source",
@@ -175,6 +177,16 @@ def detect_patterns(mining: MiningInput) -> list[dict]:
                          f"semantic verifier failed (score={data.get('semantic_verifier_score')})",
                          trace.get("_source_ref", ""))
                 )
+            elif name == "backend_failure":
+                # The run never reached a model. That is worth mining as an
+                # infrastructure pattern, and it must not be counted as a
+                # quality failure by the `verify` branch below.
+                hits["timeout_or_backend_error"].append(
+                    _Hit("timeout_or_backend_error", task_id,
+                         f"backend failure {data.get('code', '')}: "
+                         f"{str(data.get('error', ''))[:200]}",
+                         trace.get("_source_ref", ""))
+                )
             elif name == "verify" and data.get("status") == "fail":
                 # Schema failures show up as verifier fail with schema metadata
                 # in the verification artifact; we tag generically here.
@@ -185,12 +197,25 @@ def detect_patterns(mining: MiningInput) -> list[dict]:
                     )
 
     for summary in mining.eval_summaries:
+        # A run the eval runner marked degraded measured whether the backend
+        # was up, not whether Heimdal got worse. Mining it would turn one
+        # outage into a pile of "quality failures" and propose patches for
+        # defects that were never observed.
+        if summary.get("backend_degraded"):
+            continue
         for case in summary.get("results", []) or []:
             if case.get("passed"):
                 continue
-            category = "schema_failure" if case.get("category") == "schema" else (
-                "missing_source" if case.get("category") == "no_guess" else "format_failure"
-            )
+            # Belt and braces for summaries written before backend_degraded
+            # existed, and for a partially degraded run.
+            if case.get("code") in status_codes.BACKEND_CODES:
+                category = "timeout_or_backend_error"
+            elif case.get("category") == "schema":
+                category = "schema_failure"
+            elif case.get("category") == "no_guess":
+                category = "missing_source"
+            else:
+                category = "format_failure"
             hits[category].append(
                 _Hit(category, case.get("id", ""),
                      f"eval {case.get('category')} expected {case.get('expected')} got {case.get('actual')}",
@@ -202,10 +227,16 @@ def detect_patterns(mining: MiningInput) -> list[dict]:
         category = {
             "JOB_SCHEMA_INVALID": "schema_failure",
             "ADAPTER_UNSUPPORTED": "adapter_mapping_issue",
-            "OLLAMA_UNREACHABLE": "timeout_or_backend_error",
-            "OLLAMA_MODEL_MISSING": "timeout_or_backend_error",
             "CALLBACK_DELIVERY_FAILED": "callback_or_artifact_issue",
-        }.get(code, "unknown")
+        }.get(code)
+        if category is None:
+            # Every backend outage code is one pattern, so a new code added to
+            # status_codes cannot silently fall through to "unknown" (which
+            # has no proposal builder and is therefore mined as nothing).
+            category = (
+                "timeout_or_backend_error"
+                if code in status_codes.BACKEND_CODES else "unknown"
+            )
         hits[category].append(
             _Hit(category, failure.get("job_id", ""),
                  f"bridge {code}: {failure.get('error', '')[:200]}",

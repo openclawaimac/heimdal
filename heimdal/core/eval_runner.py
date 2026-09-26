@@ -174,6 +174,7 @@ def run_evals(
                 actual = result["status"]
                 error = None
                 code = result.get("code")
+                metrics = result.get("metrics", {})
                 if code in status_codes.BACKEND_CODES:
                     # The backend never answered, so this case measured
                     # nothing. Scoring it as a quality fail would read as
@@ -181,8 +182,16 @@ def run_evals(
                     backend_codes.add(code)
                     actual = "error"
                     error = result.get("message", code)
-                elif not sample_metrics:
-                    sample_metrics = result.get("metrics", {})
+                else:
+                    # A case can pass while the semantic verifier's backend was
+                    # down: the deterministic gate stays decisive, so the
+                    # answer is not wrong -- but it was never semantically
+                    # checked, so the run is not a trustworthy baseline.
+                    unavailable = metrics.get("semantic_verifier_unavailable")
+                    if unavailable:
+                        backend_codes.add(unavailable)
+                    if not sample_metrics:
+                        sample_metrics = metrics
             except Exception as exc:  # noqa: BLE001 - eval must not crash the suite
                 actual = "error"
                 error = f"{type(exc).__name__}: {exc}"

@@ -9,6 +9,7 @@ request lifecycle is reported through the backend ``event_sink``.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import time
 import urllib.error
@@ -57,12 +58,32 @@ def _error_code(exc: Exception | None) -> str:
     return status_codes.OLLAMA_UNREACHABLE
 
 
+# Absolute filesystem paths in an echoed server response. Ollama's 500 bodies
+# routinely name model blobs under the server's home directory, and these
+# messages now reach hosts as a result `message`, where the project forbids
+# absolute paths (they leak the filesystem layout and the user's name).
+_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![\w/\\])"                      # not mid-word and not part of "//"
+    r"(?:[A-Za-z]:[\\/]|[/\\])"           # a drive root or a leading separator
+    r"[\w.\-]+(?:[\\/][\w.\-]+)+"        # at least two path segments
+)
+
+
+def _redact_paths(text: str) -> str:
+    """Replace absolute paths in server-supplied text with a placeholder."""
+    return _ABSOLUTE_PATH_RE.sub("<path>", text)
+
+
 def _describe_error(exc: Exception, base_url: str, model: str, timeout: float) -> str:
-    """Build an actionable message for an Ollama failure."""
+    """Build an actionable message for an Ollama failure.
+
+    The message is host-visible (the runtime turns a failure into a result
+    `message`), so anything the server said is redacted before it is echoed.
+    """
     if isinstance(exc, urllib.error.HTTPError):
         body = ""
         try:
-            body = exc.read().decode("utf-8", "ignore")[:300]
+            body = _redact_paths(exc.read().decode("utf-8", "ignore")[:300])
         except OSError:
             pass
         if exc.code == 404:

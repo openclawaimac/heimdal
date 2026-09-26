@@ -114,13 +114,14 @@ class EndpointHealthTests(unittest.TestCase):
 
     def test_snapshot_reports_counts_and_last_error(self):
         health = EndpointHealth(clock=FakeClock())
-        health.record_success("gpu0")
-        health.record_failure("gpu1", OllamaError("connection refused"))
-        by_name = {e["name"]: e for e in health.snapshot()}
-        self.assertTrue(by_name["gpu0"]["healthy"])
-        self.assertEqual(by_name["gpu0"]["successes"], 1)
-        self.assertFalse(by_name["gpu1"]["healthy"])
-        self.assertIn("connection refused", by_name["gpu1"]["last_error"])
+        health.record_success("http://gpu0:11434")
+        health.record_failure("http://gpu1:11434", OllamaError("connection refused"))
+        by_endpoint = {e["endpoint"]: e for e in health.snapshot()}
+        self.assertTrue(by_endpoint["http://gpu0:11434"]["healthy"])
+        self.assertEqual(by_endpoint["http://gpu0:11434"]["successes"], 1)
+        self.assertFalse(by_endpoint["http://gpu1:11434"]["healthy"])
+        self.assertIn("connection refused",
+                      by_endpoint["http://gpu1:11434"]["last_error"])
 
     def test_ledger_is_thread_safe(self):
         health = EndpointHealth(failure_threshold=10_000, clock=FakeClock())
@@ -133,9 +134,9 @@ class EndpointHealthTests(unittest.TestCase):
             t.start()
         for t in threads:
             t.join()
-        by_name = {e["name"]: e for e in health.snapshot()}
-        self.assertEqual(by_name["gpu0"]["failures"], 800)
-        self.assertEqual(by_name["gpu1"]["successes"], 800)
+        by_endpoint = {e["endpoint"]: e for e in health.snapshot()}
+        self.assertEqual(by_endpoint["gpu0"]["failures"], 800)
+        self.assertEqual(by_endpoint["gpu1"]["successes"], 800)
 
 
 class FailoverBackendTests(unittest.TestCase):
@@ -470,6 +471,39 @@ class RunSurvivesDeadEndpointTests(unittest.TestCase):
         self.assertNotIn("endpoint_failover", names)
         self.assertNotIn("endpoint_unhealthy", names)
 
+    def test_a_brain_role_reroute_reaches_the_trace_pack(self):
+        # The planner call used to run before the trace sink was attached, so
+        # a brain reroute incremented the metric while leaving no trace event
+        # -- the two could not be reconciled.
+        config = temp_config(tempfile.mkdtemp())
+        config.manifest["ollama"] = dict(
+            config.manifest.get("ollama", {}),
+            endpoints=[
+                {"name": "gpu0", "base_url": "http://localhost:11434",
+                 "roles": ["brain"]},
+                {"name": "gpu1", "base_url": "http://localhost:11435",
+                 "roles": ["worker", "semantic_verifier"]},
+            ],
+        )
+        runtime = Runtime(config, prefer_backend="offline")
+        pool = EndpointPool(OllamaBackend("http://localhost:11434"), config)
+        pool._backends["gpu0"] = AnsweringBackend("gpu0", fail_first=1)
+        pool._backends["gpu1"] = AnsweringBackend("gpu1")
+        runtime.endpoint_pool = pool
+
+        result = runtime.run_envelope(_envelope("brain-fo", "B3"))
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["metrics"]["endpoint_failovers"], 1)
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        reroutes = [e["data"] for e in trace["events"]
+                    if e["name"] == "endpoint_failover"]
+        self.assertEqual(len(reroutes), 1, "the metric and the trace disagree")
+        self.assertEqual(reroutes[0]["role"], "brain")
+        self.assertEqual(reroutes[0]["served_by"], "gpu1")
+        self.assertIn("endpoint_unhealthy",
+                      [e["name"] for e in trace["events"]])
+
     def test_failover_metric_is_per_run_not_cumulative(self):
         # Hosts are told to reuse one Runtime across tasks, and the health
         # ledger is deliberately session-scoped. The metric must still
@@ -539,3 +573,116 @@ class RunSurvivesDeadEndpointTests(unittest.TestCase):
                 for r in reroutes),
             f"expected a semantic_verifier reroute onto gpu0, got {reroutes}",
         )
+
+
+class HalfOpenGateTests(unittest.TestCase):
+    """The post-cooldown trial is one request, not open season."""
+
+    def test_only_one_caller_is_admitted_per_cooldown(self):
+        clock = FakeClock()
+        health = EndpointHealth(cooldown_seconds=10, clock=clock)
+        health.record_failure("srv", OllamaError("down"))
+        clock.advance(11)
+        # First read claims the trial; the rest keep skipping the endpoint.
+        self.assertEqual([health.is_open("srv") for _ in range(4)],
+                         [False, True, True, True])
+
+    def test_parallel_samples_do_not_all_pile_into_a_dead_endpoint(self):
+        clock = FakeClock()
+        health = EndpointHealth(cooldown_seconds=10, clock=clock)
+        dead, spare = StubBackend("gpu0", OllamaError("down")), StubBackend("gpu1")
+        backend = FailoverBackend("worker", _chain(dead, spare), health)
+        backend.generate("first", model="m")          # discovers gpu0 is down
+        self.assertEqual(dead.calls, 1)
+        clock.advance(11)                             # cooldown elapses
+        for _ in range(5):
+            backend.generate("batch", model="m")
+        # Exactly one trial got through, not five full timeouts.
+        self.assertEqual(dead.calls, 2)
+
+    def test_a_failed_trial_re_arms_the_cooldown(self):
+        clock = FakeClock()
+        health = EndpointHealth(cooldown_seconds=10, clock=clock)
+        health.record_failure("srv", OllamaError("down"))
+        clock.advance(11)
+        self.assertFalse(health.is_open("srv"))       # trial claimed
+        health.record_failure("srv", OllamaError("still down"))
+        self.assertTrue(health.is_open("srv"))
+        clock.advance(11)
+        self.assertFalse(health.is_open("srv"))       # a fresh trial
+
+    def test_a_successful_trial_closes_the_circuit(self):
+        clock = FakeClock()
+        health = EndpointHealth(cooldown_seconds=10, clock=clock)
+        health.record_failure("srv", OllamaError("down"))
+        clock.advance(11)
+        health.is_open("srv")
+        health.record_success("srv")
+        self.assertEqual([health.is_open("srv") for _ in range(3)],
+                         [False, False, False])
+
+
+class LastResortOrderingTests(unittest.TestCase):
+    """An open circuit demotes a candidate; it does not remove it."""
+
+    def test_an_open_circuit_candidate_is_still_tried_when_all_else_fails(self):
+        clock = FakeClock()
+        health = EndpointHealth(cooldown_seconds=10_000, clock=clock)
+        recovered = StubBackend("gpu0")                      # actually fine now
+        dead = StubBackend("gpu1", OllamaError("down"))
+        health.record_failure(recovered.base_url, OllamaError("earlier blip"))
+        backend = FailoverBackend("worker", _chain(recovered, dead), health)
+        # gpu1 is "healthy" per the ledger and tried first, but fails; gpu0's
+        # circuit is open yet it is the only thing left, so it gets a shot.
+        self.assertEqual(backend.generate("hi", model="m").text, "answer from gpu0")
+        self.assertEqual(recovered.calls, 1)
+
+    def test_generate_and_is_available_agree_on_the_chain(self):
+        health = EndpointHealth(cooldown_seconds=10_000, clock=FakeClock())
+        alive = StubBackend("gpu0")
+        health.record_failure(alive.base_url, OllamaError("blip"))
+        backend = FailoverBackend("worker", _chain(alive), health)
+        self.assertTrue(backend.is_available())
+        # is_available() said yes, so generate() must not refuse.
+        self.assertEqual(backend.generate("hi", model="m").text, "answer from gpu0")
+
+    def test_the_error_names_every_candidate_that_was_tried(self):
+        health = EndpointHealth(cooldown_seconds=10_000, clock=FakeClock())
+        a = StubBackend("gpu0", OllamaError("down"))
+        b = StubBackend("gpu1", OllamaError("down"))
+        health.record_failure(a.base_url, OllamaError("earlier"))
+        backend = FailoverBackend("worker", _chain(a, b), health)
+        with self.assertRaises(OllamaError) as ctx:
+            backend.generate("hi", model="m")
+        message = str(ctx.exception)
+        self.assertIn("2 endpoint(s)", message)
+        self.assertIn("gpu0", message)
+        self.assertIn("gpu1", message)
+
+
+class HealthIsTrackedPerServerTests(unittest.TestCase):
+    """base_url identifies a server; a name is just a label for one."""
+
+    def test_two_names_for_one_server_share_a_circuit(self):
+        shared = StubBackend("localhost")
+        a = Candidate("gpu0", shared, True)
+        b = Candidate("default", shared, False)
+        self.assertEqual(a.health_key, b.health_key)
+        health = EndpointHealth(cooldown_seconds=1000, clock=FakeClock())
+        health.record_failure(a.health_key, OllamaError("down"))
+        # Reaching the same dead server under the other name must not look
+        # healthy -- that is the whole point of routing around it.
+        self.assertTrue(health.is_open(b.health_key))
+
+    def test_the_aliased_default_endpoint_shares_the_pool_circuit(self):
+        # The shipped example has ollama.base_url == gpu0.base_url, so an
+        # unmapped role falls through to the same server under the name
+        # "default".
+        config = temp_config(tempfile.mkdtemp())
+        config.manifest["ollama"] = dict(config.manifest.get("ollama", {}),
+                                         endpoints=_ENDPOINTS)
+        pool = EndpointPool(OllamaBackend("http://localhost:11434"), config)
+        pool.health.record_failure("http://localhost:11434", OllamaError("down"))
+        coder = pool.candidates_for_role("coder")
+        self.assertEqual(coder[0].name, "default")
+        self.assertTrue(pool.health.is_open(coder[0].health_key))

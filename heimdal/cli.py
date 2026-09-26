@@ -143,6 +143,18 @@ def cmd_doctor(args) -> int:
 
 
 # -- run -------------------------------------------------------------------
+def _result_exit_code(status: str, code: str | None) -> int:
+    """0 for a usable result, 2 for a backend outage, 1 for anything else.
+
+    The 1-vs-2 split lets a shell caller tell "Heimdal could not produce an
+    answer" from "the answer failed verification" -- the same distinction
+    `heimdal run` makes, applied consistently across the entrypoints.
+    """
+    if status in ("pass", "need_input"):
+        return 0
+    return 2 if code in status_codes.BACKEND_CODES else 1
+
+
 def cmd_run(args) -> int:
     config = load_config(args.manifest)
     runtime = Runtime(
@@ -166,12 +178,7 @@ def cmd_run(args) -> int:
         print(json.dumps(result, indent=2, default=str))
     else:
         print(adapter.from_heimdal_result(result))
-    if result["status"] in ("pass", "need_input"):
-        return 0
-    # Keep the shell-visible distinction a caller had before backend
-    # outages became structured results: 1 means the answer failed
-    # verification, 2 means Heimdal could not produce one at all.
-    return 2 if result.get("code") in status_codes.BACKEND_CODES else 1
+    return _result_exit_code(result["status"], result.get("code"))
 
 
 # -- eval ------------------------------------------------------------------
@@ -249,7 +256,7 @@ def cmd_verify(args) -> int:
             print(f"  defect: ({defect['severity']}) {defect['message']}")
         print(f"repro   : {result['repro_pack_ref']}")
         print(f"trace   : {result['trace_pack_ref']}")
-    return 0 if result["status"] == "pass" else 1
+    return _result_exit_code(result["status"], result.get("code"))
 
 
 # -- host doctor (shared by hermes + openclaw) -----------------------------
@@ -480,7 +487,7 @@ def cmd_openclaw(args) -> int:
             print(f"repro   : {result['repro_pack_ref']}")
         if result.get("trace_pack_ref"):
             print(f"trace   : {result['trace_pack_ref']}")
-    return 0 if result["outcome"] in ("pass", "need_input") else 1
+    return _result_exit_code(result["outcome"], result.get("code"))
 
 
 # -- hermes ----------------------------------------------------------------
@@ -527,7 +534,7 @@ def cmd_hermes(args) -> int:
             print(f"repro   : {result['repro_pack_ref']}")
         if result.get("trace_pack_ref"):
             print(f"trace   : {result['trace_pack_ref']}")
-    return 0 if result["status"] in ("pass", "need_input") else 1
+    return _result_exit_code(result["status"], result.get("code"))
 
 
 # -- profile ---------------------------------------------------------------

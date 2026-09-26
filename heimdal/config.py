@@ -53,43 +53,54 @@ class Config:
     # -- accessors ---------------------------------------------------------
     @property
     def runtime(self) -> dict:
-        return self.manifest.get("runtime", {})
+        return self._block("runtime")
+
+    def _block(self, name: str) -> dict:
+        """A manifest section, as a mapping.
+
+        A section written with no body (``ollama:`` and everything under it
+        commented out) parses to None, not {}. Returning that raw turns a
+        harmless edit into an AttributeError inside whichever consumer
+        happened to touch it first.
+        """
+        value = self.manifest.get(name)
+        return value if isinstance(value, dict) else {}
 
     @property
     def ollama(self) -> dict:
-        return self.manifest.get("ollama", {})
+        return self._block("ollama")
 
     @property
     def model_profiles(self) -> dict:
-        return self.manifest.get("model_profiles", {})
+        return self._block("model_profiles")
 
     @property
     def model_roles(self) -> dict:
-        return self.manifest.get("model_roles", {})
+        return self._block("model_roles")
 
     @property
     def runtime_profiles(self) -> dict:
-        return self.manifest.get("runtime_profiles", {})
+        return self._block("runtime_profiles")
 
     @property
     def scheduler(self) -> dict:
-        return self.manifest.get("scheduler", {})
+        return self._block("scheduler")
 
     @property
     def budgets(self) -> dict:
-        return self.manifest.get("budgets", {})
+        return self._block("budgets")
 
     @property
     def verifier(self) -> dict:
-        return self.manifest.get("verifier", {})
+        return self._block("verifier")
 
     @property
     def retrieval(self) -> dict:
-        return self.manifest.get("retrieval", {})
+        return self._block("retrieval")
 
     @property
     def mirror(self) -> dict:
-        return self.manifest.get("mirror", {})
+        return self._block("mirror")
 
     @property
     def privacy_mode(self) -> str:
@@ -100,7 +111,7 @@ class Config:
 
     def sandbox_policy(self) -> dict:
         if self._sandbox is None:
-            policy_file = self.manifest.get("sandbox", {}).get(
+            policy_file = self._block("sandbox").get(
                 "policy_file", "config/sandbox_policy.yml"
             )
             path = _abspath(policy_file)

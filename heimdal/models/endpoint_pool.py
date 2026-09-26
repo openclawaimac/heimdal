@@ -114,6 +114,33 @@ class Endpoint:
     slots: int = 1
 
 
+def _parse_roles(raw_value) -> list[str]:
+    """Read an endpoint's ``roles``.
+
+    ``roles: worker`` is an easy YAML slip for ``roles: [worker]``; iterating
+    the string would silently yield ['w','o','r','k','e','r'] and drop the
+    endpoint from every role, so a bare string is read as one role.
+    """
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, str):
+        return [raw_value]
+    return [str(r) for r in raw_value]
+
+
+def _parse_cooldown(raw_value) -> float:
+    """Read ``ollama.failover_cooldown_seconds``.
+
+    A typo in the manifest must not take down every entrypoint with a bare
+    ValueError, so anything unreadable falls back to the default and a
+    negative value clamps to "no cooldown".
+    """
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        return DEFAULT_COOLDOWN_SECONDS
+
+
 def _parse_slots(raw_value) -> int:
     try:
         slots = int(raw_value)
@@ -125,13 +152,21 @@ def _parse_slots(raw_value) -> int:
 def parse_endpoints(ollama_cfg: dict) -> list[Endpoint]:
     """Read ``ollama.endpoints`` from the manifest; empty when absent."""
     out: list[Endpoint] = []
+    seen_names: set[str] = set()
     for index, raw in enumerate(ollama_cfg.get("endpoints") or []):
         if not isinstance(raw, dict) or not raw.get("base_url"):
             continue
+        name = str(raw.get("name") or f"endpoint{index}")
+        # Names key the per-endpoint backend cache, so a repeated name would
+        # quietly serve the second endpoint's traffic to the first one's URL.
+        # Keep both servers by disambiguating instead of dropping one.
+        if name in seen_names:
+            name = f"{name}#{index}"
+        seen_names.add(name)
         out.append(Endpoint(
-            name=str(raw.get("name") or f"endpoint{index}"),
+            name=name,
             base_url=str(raw["base_url"]).rstrip("/"),
-            roles=[str(r) for r in (raw.get("roles") or [])],
+            roles=_parse_roles(raw.get("roles")),
             slots=_parse_slots(raw.get("slots", 1)),
         ))
     return out
@@ -161,10 +196,10 @@ class EndpointPool:
         # offline backend is a single in-process stub.
         if config is not None and default_backend.name == "ollama":
             self._endpoints = parse_endpoints(config.ollama)
-        ollama_cfg = config.ollama if config is not None else {}
+        ollama_cfg = (config.ollama if config is not None else None) or {}
         self.failover_mode = _parse_failover_mode(ollama_cfg.get("failover", "auto"))
         self.health = EndpointHealth(
-            cooldown_seconds=float(
+            cooldown_seconds=_parse_cooldown(
                 ollama_cfg.get("failover_cooldown_seconds", DEFAULT_COOLDOWN_SECONDS)
             ),
         )
@@ -309,7 +344,10 @@ class EndpointPool:
         cfg = (config or self._config)
         flag = "auto"
         if cfg is not None:
-            flag = cfg.manifest.get("concurrency", {}).get("parallel_samples", "auto")
+            # `concurrency:` with everything under it commented out parses to
+            # None, not {}.
+            concurrency = cfg.manifest.get("concurrency") or {}
+            flag = concurrency.get("parallel_samples", "auto")
         if flag is True:
             return True
         if flag is False:
@@ -337,7 +375,9 @@ class EndpointPool:
                 "roles": endpoint.roles,
                 "slots": endpoint.slots,
                 "reachable": reachable,
-                "circuit_open": self.health.is_open(endpoint.name),
+                # Health is tracked per server, so an endpoint aliasing the
+                # same base_url shares one circuit.
+                "circuit_open": self.health.is_open(endpoint.base_url),
                 "models": backend.list_models() if reachable else [],
             })
         return out

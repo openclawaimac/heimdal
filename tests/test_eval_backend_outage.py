@@ -17,22 +17,42 @@ from tests.helpers import temp_config
 from heimdal.core import eval_runner, model_router, patch_manager, status_codes
 from heimdal.core.runtime import Runtime
 from heimdal.models.ollama import OllamaError
+from heimdal.storage import Storage
 
 _EVAL_DIR = os.path.join(tempfile.mkdtemp(), "eval")
 
 
-def _tiny_suite() -> str:
+def _tiny_suite(quality_level: str = "B1") -> str:
     """A two-case suite, so these tests do not run the full 40."""
-    os.makedirs(_EVAL_DIR, exist_ok=True)
+    directory = os.path.join(_EVAL_DIR, quality_level)
+    os.makedirs(directory, exist_ok=True)
     cases = [
-        {"id": "e1", "instruction": "Explain what a queue is and how it behaves."},
-        {"id": "e2", "instruction": "Explain what a stack is and how it behaves."},
+        {"id": "e1", "quality_level": quality_level,
+         "instruction": "Explain what a queue is and how it behaves."},
+        {"id": "e2", "quality_level": quality_level,
+         "instruction": "Explain what a stack is and how it behaves."},
     ]
     for category, filename in eval_runner.CATEGORY_FILES.items():
         payload = cases if category in ("smoke", "must_pass") else []
-        with open(os.path.join(_EVAL_DIR, filename), "w", encoding="utf-8") as fh:
+        with open(os.path.join(directory, filename), "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
-    return _EVAL_DIR
+    return directory
+
+
+def _envelope(task_id: str, quality_level: str = "B1") -> dict:
+    return {
+        "host": {"type": "cli", "host_task_id": task_id,
+                 "source_agent": None, "callback": {}},
+        "role_binding": {"role_id": "general", "risk_mode": "balanced",
+                         "privacy_mode": "local_only",
+                         "output_profiles": ["markdown"]},
+        "task_request": {"task_id": task_id, "title": "Outage demo",
+                         "instruction": "Explain what a queue is and how it behaves.",
+                         "inputs": {}, "constraints": {}, "priority": "P2",
+                         "budget": {"quality_level": quality_level},
+                         "expected_outputs": ["markdown_response"]},
+        "runtime_hints": {},
+    }
 
 
 def _runtime() -> Runtime:
@@ -284,3 +304,137 @@ class EvalCLIExitCodeTests(unittest.TestCase):
             code, out = self._eval()
         self.assertEqual(code, 1)
         self.assertNotIn("DEGRADED", out)
+
+
+class DreamMustNotMineAnOutageTests(unittest.TestCase):
+    """Self-improvement must not learn from a run that measured nothing."""
+
+    def _degraded_eval(self):
+        runtime = _runtime()
+        with mock.patch("heimdal.models.offline.OfflineBackend.generate", _outage):
+            summary = eval_runner.run_evals(runtime, eval_dir=_tiny_suite())
+        self.assertTrue(summary["backend_degraded"])
+        return runtime
+
+    def test_a_degraded_eval_run_yields_no_failure_patterns(self):
+        # Otherwise one outage becomes a pile of "quality failures" and Dream
+        # proposes patches for defects that were never observed.
+        from heimdal.dream import analysis
+        runtime = self._degraded_eval()
+        mining = analysis.gather_inputs(runtime.storage, source="eval", limit=50)
+        patterns = analysis.detect_patterns(mining)
+        self.assertEqual(patterns, [])
+
+    def test_an_outage_trace_is_mined_as_infrastructure_not_quality(self):
+        from heimdal.dream import analysis
+        runtime = self._degraded_eval()
+        mining = analysis.gather_inputs(runtime.storage, source="recent", limit=50)
+        by_category = {p["category"]: p["count"]
+                       for p in analysis.detect_patterns(mining)}
+        self.assertIn("timeout_or_backend_error", by_category)
+        self.assertNotIn("format_failure", by_category)
+        self.assertNotIn("schema_failure", by_category)
+
+    def test_every_backend_code_maps_to_the_infrastructure_pattern(self):
+        # OLLAMA_TIMEOUT and OLLAMA_REQUEST_FAILED were newer than the map and
+        # fell through to "unknown", which has no proposal builder.
+        from heimdal.dream import analysis
+        for code in sorted(status_codes.BACKEND_CODES):
+            with self.subTest(code=code):
+                mining = analysis.MiningInput(
+                    bridge_failures=[{"job_id": "j", "code": code, "error": "x",
+                                      "bridge": {"input_ref": "r"}}],
+                )
+                categories = {p["category"]
+                              for p in analysis.detect_patterns(mining)}
+                self.assertEqual(categories, {"timeout_or_backend_error"})
+
+    def test_a_partially_degraded_case_is_classified_by_its_code(self):
+        # Belt and braces for summaries written before backend_degraded, and
+        # for a run where only some cases hit the backend.
+        from heimdal.dream import analysis
+        mining = analysis.MiningInput(eval_summaries=[{
+            "eval_run_id": "evalrun_old",
+            "results": [
+                {"id": "c1", "category": "smoke", "passed": False,
+                 "expected": "pass", "actual": "error",
+                 "code": status_codes.OLLAMA_TIMEOUT},
+                {"id": "c2", "category": "schema", "passed": False,
+                 "expected": "pass", "actual": "fail", "code": None},
+            ],
+        }])
+        by_category = {p["category"]: p["count"]
+                       for p in analysis.detect_patterns(mining)}
+        self.assertEqual(by_category.get("timeout_or_backend_error"), 1)
+        self.assertEqual(by_category.get("schema_failure"), 1)
+
+
+class SemanticVerifierOutageTests(unittest.TestCase):
+    """Passing without being checked is not the same as passing."""
+
+    @staticmethod
+    def _semantic_only_outage():
+        from heimdal.models.offline import OfflineBackend
+        real = OfflineBackend.generate
+
+        def patched(self, prompt, **kwargs):
+            if (kwargs.get("structured") or {}).get("verify_task") == "semantic":
+                raise OllamaError("verifier GPU gone",
+                                  code=status_codes.OLLAMA_UNREACHABLE)
+            return real(self, prompt, **kwargs)
+
+        return mock.patch.object(OfflineBackend, "generate", patched)
+
+    def _hybrid_runtime(self) -> Runtime:
+        return Runtime(temp_config(tempfile.mkdtemp()), prefer_backend="offline",
+                       verifier_override="hybrid")
+
+    def test_the_verdict_is_unchanged_but_the_gap_is_reported(self):
+        # The deterministic gate stays decisive, so the answer is not declared
+        # wrong. What must not happen is the run looking fully verified.
+        runtime = self._hybrid_runtime()
+        with self._semantic_only_outage():
+            result = runtime.run_envelope(_envelope("sv-1", "B2"))
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["metrics"]["semantic_verifier_unavailable"],
+                         status_codes.OLLAMA_UNREACHABLE)
+
+    def test_the_trace_records_that_nothing_was_semantically_verified(self):
+        runtime = self._hybrid_runtime()
+        with self._semantic_only_outage():
+            result = runtime.run_envelope(_envelope("sv-2", "B2"))
+        trace = Storage.read_json(result["trace_pack"]["path"])
+        event = next(e for e in trace["events"] if e["name"] == "semantic_verify")
+        self.assertEqual(event["data"]["semantic_verifier_unavailable"],
+                         status_codes.OLLAMA_UNREACHABLE)
+
+    def test_an_unverified_eval_run_cannot_become_evidence(self):
+        runtime = self._hybrid_runtime()
+        with self._semantic_only_outage():
+            summary = eval_runner.run_evals(runtime, eval_dir=_tiny_suite("B2"))
+        # Every case passed its deterministic gate...
+        self.assertEqual(summary["pass_rate"], 1.0)
+        # ...but nothing was semantically checked, so the run is not a baseline
+        # and cannot promote a patch.
+        self.assertTrue(summary["backend_degraded"])
+        self.assertIn(status_codes.OLLAMA_UNREACHABLE, summary["backend_codes"])
+        ok, reason = patch_manager.can_promote_to_stable(
+            {"type": "prompt_patch"}, summary,
+        )
+        self.assertFalse(ok)
+        self.assertIn("outage", reason)
+
+    def test_a_healthy_hybrid_run_is_not_marked_degraded(self):
+        runtime = self._hybrid_runtime()
+        summary = eval_runner.run_evals(runtime, eval_dir=_tiny_suite("B2"))
+        self.assertFalse(summary["backend_degraded"])
+        self.assertEqual(summary["backend_codes"], [])
+
+    def test_a_garbled_reply_is_still_treated_as_non_fatal_and_not_an_outage(self):
+        # A malformed answer is a different thing from a dead backend; it must
+        # not start marking runs degraded.
+        from heimdal.core import verifier
+        result = verifier._normalize_semantic("not a dict", "m")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["confidence"], 0.0)
+        self.assertNotIn("unavailable_code", result)

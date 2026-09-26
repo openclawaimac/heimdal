@@ -58,6 +58,9 @@ class _EndpointState:
     total_failures: int = 0
     total_successes: int = 0
     opened_at: float | None = None
+    # Set once the post-cooldown trial request has been handed out, so the
+    # half-open gate admits one caller rather than everyone who asks.
+    trial_claimed: bool = False
     last_error: str = ""
 
 
@@ -70,6 +73,18 @@ class Candidate:
     # True when this candidate is mapped to the role in the manifest, False
     # when it is a spare borrowed from elsewhere in the pool.
     preferred: bool = True
+
+    @property
+    def health_key(self) -> str:
+        """What the circuit breaker tracks: the server, not the label.
+
+        ``ollama.base_url`` commonly equals one of the configured endpoints,
+        so the same server is reachable under two names. Keying health by
+        name would give it two independent circuits, and a role routed
+        through the other name would keep hitting a server already known to
+        be down.
+        """
+        return getattr(self.backend, "base_url", None) or self.name
 
 
 class EndpointHealth:
@@ -99,6 +114,7 @@ class EndpointHealth:
             state = self._state(name)
             state.consecutive_failures = 0
             state.opened_at = None
+            state.trial_claimed = False
             state.total_successes += 1
 
     def record_failure(self, name: str, error: BaseException) -> None:
@@ -109,6 +125,8 @@ class EndpointHealth:
             state.last_error = str(error)[:300]
             if state.consecutive_failures >= self.failure_threshold:
                 state.opened_at = self._clock()
+                # Re-arm: the next cooldown gets its own single trial.
+                state.trial_claimed = False
 
     def record_failover(self) -> None:
         with self._lock:
@@ -117,24 +135,29 @@ class EndpointHealth:
     def is_open(self, name: str) -> bool:
         """True when ``name`` is currently out of rotation.
 
-        The circuit re-closes optimistically once the cooldown elapses; the
-        next request is the trial that decides whether it opens again.
+        Once the cooldown elapses, exactly one caller is let through as the
+        trial that decides whether the endpoint comes back. Claiming that
+        slot here (rather than clearing the circuit outright) is what keeps a
+        batch of parallel samples from all piling into a dead endpoint and
+        each paying its full timeout.
         """
         with self._lock:
             state = self._states.get(name)
             if state is None or state.opened_at is None:
                 return False
-            if self._clock() - state.opened_at >= self.cooldown_seconds:
-                state.opened_at = None
-                state.consecutive_failures = 0
-                return False
-            return True
+            if self._clock() - state.opened_at < self.cooldown_seconds:
+                return True
+            if state.trial_claimed:
+                return True
+            state.trial_claimed = True
+            return False
 
     def snapshot(self) -> list[dict]:
         with self._lock:
             return [
                 {
-                    "name": name,
+                    # The server's base_url: what the breaker tracks.
+                    "endpoint": name,
                     "healthy": state.opened_at is None,
                     "successes": state.total_successes,
                     "failures": state.total_failures,
@@ -187,7 +210,8 @@ class FailoverBackend(ModelBackend):
         """Split candidates into healthy ones and those with an open circuit."""
         healthy, down = [], []
         for candidate in self.candidates:
-            (down if self.health.is_open(candidate.name) else healthy).append(candidate)
+            (down if self.health.is_open(candidate.health_key) else healthy)\
+                .append(candidate)
         return healthy, down
 
     def _attempt_order(self) -> list[Candidate]:
@@ -210,10 +234,11 @@ class FailoverBackend(ModelBackend):
 
     def generate(self, prompt: str, **kwargs) -> GenerationResult:
         healthy, skipped = self._ordered()
-        # Everything is marked down: attempt it all anyway, in preference
-        # order, rather than refusing outright.
-        order = healthy or skipped
-        skipped_names = [c.name for c in skipped] if healthy else []
+        # Healthy candidates first, then the ones whose circuit is open as a
+        # last resort: a stale ledger must not strand a recovered cluster, and
+        # a long-shot attempt beats refusing outright.
+        order = healthy + skipped
+        skipped_names = [c.name for c in skipped]
         primary = self.candidates[0].name
 
         failed: list[str] = []
@@ -224,7 +249,7 @@ class FailoverBackend(ModelBackend):
             except FAILOVER_ERRORS as exc:
                 last_error = exc
                 failed.append(candidate.name)
-                self.health.record_failure(candidate.name, exc)
+                self.health.record_failure(candidate.health_key, exc)
                 self._emit(
                     "endpoint_unhealthy",
                     role=self.role,
@@ -234,7 +259,7 @@ class FailoverBackend(ModelBackend):
                     remaining_candidates=len(order) - len(failed),
                 )
                 continue
-            self.health.record_success(candidate.name)
+            self.health.record_success(candidate.health_key)
             # Anything other than the configured first choice is a fallback,
             # including the case where the primary was skipped outright
             # because its circuit was still open from an earlier request.

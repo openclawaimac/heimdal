@@ -410,3 +410,68 @@ class EndpointsCLITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManifestHardeningTests(unittest.TestCase):
+    """A manifest typo must not take down every entrypoint."""
+
+    def _runtime(self, ollama=None, concurrency="unset"):
+        from heimdal.core.runtime import Runtime
+        config = temp_config(tempfile.mkdtemp())
+        if ollama is not None:
+            config.manifest["ollama"] = dict(
+                config.manifest.get("ollama", {}), **ollama,
+            )
+        if concurrency != "unset":
+            config.manifest["concurrency"] = concurrency
+        return Runtime(config, prefer_backend="offline"), config
+
+    def test_roles_as_a_bare_string_is_read_as_one_role(self):
+        # `roles: worker` instead of `roles: [worker]` used to iterate the
+        # string and silently drop the endpoint from every role.
+        parsed = parse_endpoints({"endpoints": [
+            {"name": "gpu0", "base_url": "http://a:11434", "roles": "worker"},
+        ]})
+        self.assertEqual(parsed[0].roles, ["worker"])
+
+    def test_unreadable_cooldown_falls_back_to_the_default(self):
+        for value in ("60s", None, "", "abc", []):
+            with self.subTest(value=value):
+                runtime, _ = self._runtime({"failover_cooldown_seconds": value})
+                self.assertEqual(runtime.endpoint_pool.health.cooldown_seconds, 60.0)
+
+    def test_a_negative_cooldown_clamps_to_zero(self):
+        runtime, _ = self._runtime({"failover_cooldown_seconds": -5})
+        self.assertEqual(runtime.endpoint_pool.health.cooldown_seconds, 0.0)
+
+    def test_an_empty_concurrency_block_does_not_crash(self):
+        # `concurrency:` with everything under it commented out parses to None.
+        runtime, config = self._runtime(concurrency=None)
+        self.assertFalse(runtime.endpoint_pool.parallel_samples_enabled(config))
+
+    def test_an_empty_ollama_block_does_not_crash(self):
+        config = temp_config(tempfile.mkdtemp())
+        config.manifest["ollama"] = None
+        from heimdal.core.runtime import Runtime
+        runtime = Runtime(config, prefer_backend="offline")
+        self.assertEqual(runtime.endpoint_pool.failover_mode, "auto")
+
+    def test_duplicate_endpoint_names_keep_both_servers(self):
+        # Names key the per-endpoint backend cache, so a repeated name used to
+        # serve the second endpoint's traffic to the first one's URL.
+        config = temp_config(tempfile.mkdtemp())
+        config.manifest["ollama"] = dict(
+            config.manifest.get("ollama", {}),
+            endpoints=[
+                {"name": "gpu0", "base_url": "http://host-a:11434",
+                 "roles": ["worker"]},
+                {"name": "gpu0", "base_url": "http://host-b:11434",
+                 "roles": ["worker"]},
+            ],
+        )
+        pool = EndpointPool(OllamaBackend("http://localhost:11434"), config)
+        self.assertEqual(
+            [b.primary.base_url for b in pool.worker_backends()],
+            ["http://host-a:11434", "http://host-b:11434"],
+        )
+        self.assertEqual(len({e.name for e in pool._endpoints}), 2)

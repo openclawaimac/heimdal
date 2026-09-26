@@ -204,8 +204,111 @@ class VerifyEnvelopeBackendFailureTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["code"], status_codes.OLLAMA_UNREACHABLE)
-        trace = Storage.read_json(result["trace_pack"]["path"])
+        trace = Storage.read_json(
+            os.path.join(runtime.storage.root, result["trace_pack_ref"])
+        )
         self.assertIn("backend_failure", [e["name"] for e in trace["events"]])
+
+    def test_the_outage_result_keeps_the_verify_contract(self):
+        # verify_envelope returns a different shape from run_envelope. Handing
+        # back a run envelope here crashes `heimdal verify`, which reads
+        # result["score"] and result["verifier"]["backend"].
+        class Unreachable(DeadBackend):
+            base_url = "http://127.0.0.1:9"
+
+            def list_models(self) -> list[str]:
+                return []
+
+        runtime = _runtime_with(Unreachable())
+        result = runtime.verify_envelope(
+            _envelope("bf-verify-3"), "A queue is first-in, first-out."
+        )
+        for key in ("task_id", "status", "code", "score", "defects",
+                    "schema_errors", "verifier", "repro_pack_ref",
+                    "trace_pack_ref"):
+            self.assertIn(key, result, f"verify contract is missing {key!r}")
+        self.assertEqual(result["score"], 0.0)
+        self.assertEqual(result["verifier"]["backend"], "unavailable")
+        self.assertTrue(result["defects"])
+        # Refs are relative, never absolute -- same rule as a normal verify.
+        self.assertFalse(os.path.isabs(result["trace_pack_ref"]))
+        self.assertFalse(os.path.isabs(result["repro_pack_ref"]))
+        # And the run-envelope keys must NOT be here.
+        self.assertNotIn("artifacts", result)
+        self.assertNotIn("trace_pack", result)
+
+
+class HostSafetyOfOutageMessagesTests(unittest.TestCase):
+    """A host-visible message must never carry an absolute path.
+
+    Ollama's 5xx bodies routinely name model blobs under the server's home
+    directory. Those bodies used to escape as an exception; now they become a
+    result `message`, where the project's host-safety rule applies.
+    """
+
+    def test_paths_in_a_server_error_body_are_redacted(self):
+        import http.server
+        import threading
+
+        leak = ("/home/someuser/.ollama/models/blobs/sha256-deadbeef")
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # /api/tags -- one model installed
+                body = json.dumps({"models": [{"name": "qwen2.5:7b"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):  # /api/generate -- 500 naming a blob path
+                body = json.dumps({
+                    "error": f"llama runner terminated: error loading model {leak}"
+                }).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            from heimdal.models.ollama import OllamaBackend
+            config = temp_config(tempfile.mkdtemp())
+            runtime = Runtime(config, prefer_backend="offline")
+            backend = OllamaBackend(
+                f"http://127.0.0.1:{server.server_port}", max_retries=0,
+            )
+            runtime.backend = backend
+            runtime.endpoint_pool.default_backend = backend
+
+            result = runtime.run_envelope(_envelope("bf-leak"))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(result["code"], status_codes.OLLAMA_REQUEST_FAILED)
+        self.assertNotIn(leak, result["message"])
+        self.assertNotIn("/home/someuser", result["message"])
+        self.assertIn("<path>", result["message"])
+        # The useful part survives: which model and what the server said.
+        self.assertIn("500", result["message"])
+
+    def test_redaction_keeps_urls_and_relative_paths_intact(self):
+        from heimdal.models.ollama import _redact_paths
+        self.assertEqual(
+            _redact_paths("connecting to http://localhost:11434/api/generate"),
+            "connecting to http://localhost:11434/api/generate",
+        )
+        self.assertEqual(_redact_paths("logs/trace_packs/x.json"),
+                         "logs/trace_packs/x.json")
+        self.assertEqual(_redact_paths("model at /var/lib/ollama/blobs/x"),
+                         "model at <path>")
 
 
 class HostAdapterBackendFailureTests(unittest.TestCase):
@@ -352,3 +455,32 @@ class CLIBackendFailureTests(unittest.TestCase):
         ])
         self.assertEqual(code, 0)
         self.assertNotIn("code   :", out)
+
+
+class ExitCodeConsistencyTests(unittest.TestCase):
+    """Every entrypoint tells an outage apart from a failed answer the same way."""
+
+    def test_the_shared_helper_covers_the_three_outcomes(self):
+        from heimdal.cli import _result_exit_code
+        self.assertEqual(_result_exit_code("pass", "OK"), 0)
+        self.assertEqual(_result_exit_code("need_input",
+                                          status_codes.SOURCE_MISSING), 0)
+        self.assertEqual(_result_exit_code("fail",
+                                          status_codes.VERIFIER_RULE_FAIL), 1)
+        self.assertEqual(_result_exit_code("fail", None), 1)
+        for code in sorted(status_codes.BACKEND_CODES):
+            with self.subTest(code=code):
+                self.assertEqual(_result_exit_code("fail", code), 2)
+
+    def test_every_result_entrypoint_uses_it(self):
+        # run / verify / hermes run / openclaw run previously disagreed:
+        # `heimdal run` exited 2 on an outage while the others exited 1.
+        import inspect
+        from heimdal import cli
+        for name in ("cmd_run", "cmd_verify", "cmd_hermes", "cmd_openclaw"):
+            function = getattr(cli, name, None)
+            if function is None:
+                continue
+            with self.subTest(command=name):
+                source = inspect.getsource(function)
+                self.assertIn("_result_exit_code", source)

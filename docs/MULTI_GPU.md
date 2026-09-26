@@ -121,10 +121,20 @@ pre-v0.7.1 behaviour.
 
 An endpoint that raises is taken out of rotation rather than retried on
 every subsequent request. After `failover_cooldown_seconds` (default 60)
-one trial request is allowed through; if it succeeds the endpoint is back
-in rotation, if it fails the endpoint drops out again. The ledger is
-session-scoped and shared across roles, so one role discovering a dead
+exactly one request is admitted as the trial: if it succeeds the endpoint
+is back in rotation, if it fails the cooldown re-arms. Admitting one
+rather than all is what stops a batch of parallel samples from piling into
+a dead endpoint and each paying its full timeout.
+
+The ledger tracks a *server*, keyed by `base_url`, not an endpoint name.
+Two names for one server — which the example above produces, since
+`ollama.base_url` equals `gpu0`'s — therefore share a single circuit. It
+is session-scoped and shared across roles, so one role discovering a dead
 GPU spares the others from rediscovering it.
+
+A value that cannot be read as a number falls back to the default rather
+than raising; a negative one clamps to zero, which means "no cooldown" and
+effectively disables the breaker.
 
 Note that the per-endpoint retries `ollama.max_retries` configures happen
 *first*, inside a single endpoint. Failover only engages once an endpoint
@@ -132,9 +142,10 @@ has exhausted those — a single failover therefore means the endpoint
 genuinely failed several times, which is why one failure is enough to open
 its circuit.
 
-If every candidate's circuit is open, requests are attempted anyway rather
-than refused outright: the cooldown may simply not have elapsed on an
-endpoint that has since recovered.
+An open circuit demotes a candidate to last resort; it does not remove it.
+Healthy candidates are tried first, then the ones whose circuit is open —
+a stale ledger must not strand a cluster that has since recovered, and a
+long-shot attempt beats refusing outright.
 
 ### What gets rerouted
 
@@ -148,7 +159,9 @@ instead of being masked by a retry storm across the cluster.
 A degraded run is visible rather than just slower:
 
 - `endpoint_failover_policy` (Trace Pack) records the candidate chain at
-  the start of a run.
+  the start of a run. Every model call — including the B3/B4 planner step —
+  runs with the trace attached, so the events below and the metric below
+  always reconcile.
 - `endpoint_unhealthy` records each endpoint that failed, with the error.
 - `endpoint_failover` records which endpoint ultimately served the
   request, which ones were tried and failed, which were skipped for

@@ -21,6 +21,7 @@ import json
 import re
 
 from heimdal import jsonschema_min
+from heimdal.core import status_codes
 from heimdal.core.constants import FAIL, HYBRID, LENIENT, PASS, RULE_BASED, STANDARD, STRICT
 from heimdal.core.task_contract import requires_grounding
 
@@ -145,14 +146,21 @@ def _deterministic_checks(
 
 
 # -- Gate 2: model-based semantic verifier ---------------------------------
-def _normalize_semantic(raw, model: str) -> dict:
+def _normalize_semantic(raw, model: str, unavailable_code: str | None = None) -> dict:
     """Coerce a model's reply into a schema-valid semantic result.
 
     A malformed reply is non-fatal: it normalises to a pass with confidence 0
     so the deterministic gate (which already passed) stays decisive.
+
+    ``unavailable_code`` records that the verifier never answered *because the
+    backend was down*, which is a different thing from a garbled reply. The
+    verdict is unchanged -- the deterministic gate stays decisive either way --
+    but the run must be able to say that nothing was semantically verified,
+    or it could become a regression baseline and promote a patch on the
+    strength of a check that never ran.
     """
     if not isinstance(raw, dict):
-        return {
+        result = {
             "status": PASS,
             "score": 1.0,
             "confidence": 0.0,
@@ -160,6 +168,9 @@ def _normalize_semantic(raw, model: str) -> dict:
             "rationale_short": "semantic verification unavailable",
             "model": model,
         }
+        if unavailable_code:
+            result["unavailable_code"] = unavailable_code
+        return result
     status = raw.get("status") if raw.get("status") in (PASS, FAIL) else PASS
     defects = []
     for item in raw.get("defects", []) or []:
@@ -188,6 +199,7 @@ def _semantic_verify(output_text, contract, routing, backend, config) -> dict:
     objective = contract.get("objective", "")
     prompt = f"TASK:\n{objective}\n\nRESPONSE:\n{output_text}\n"
     raw = None
+    unavailable_code = None
     try:
         gen = backend.generate(
             prompt,
@@ -203,9 +215,16 @@ def _semantic_verify(output_text, contract, routing, backend, config) -> dict:
             },
         )
         raw = json.loads(gen.text)
-    except (RuntimeError, OSError, ValueError, json.JSONDecodeError):
+    except (RuntimeError, OSError, ValueError, json.JSONDecodeError) as exc:
         raw = None
-    result = _normalize_semantic(raw, model)
+        # An outage is not a garbled reply: record which it was so the run can
+        # report that semantic verification did not happen.
+        code = getattr(exc, "code", None)
+        if code in status_codes.BACKEND_CODES:
+            unavailable_code = code
+        elif isinstance(exc, (RuntimeError, OSError)):
+            unavailable_code = status_codes.OLLAMA_UNREACHABLE
+    result = _normalize_semantic(raw, model, unavailable_code)
     jsonschema_min.validate_or_raise(
         result,
         config.schema_path("semantic_verification.schema.json"),

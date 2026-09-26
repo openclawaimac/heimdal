@@ -193,6 +193,12 @@ class Runtime:
             "endpoint_failovers": (
                 self.endpoint_pool.failover_count() - failovers_before
             ),
+            # Non-null when the hybrid verifier was configured but its backend
+            # never answered: the answer was produced but nothing checked it
+            # semantically.
+            "semantic_verifier_unavailable": (
+                (outcome["verification"].get("semantic") or {}).get("unavailable_code")
+            ),
         }
 
         repro = repro_trace.build_repro_pack(
@@ -285,9 +291,9 @@ class Runtime:
             # Same contract as a full run: a backend that cannot be reached
             # is reported, not raised. Verification without a model is not a
             # verdict, so this is a fail rather than a lenient pass.
-            return self._backend_failure(
-                validated=validated, contract=contract, trace=trace,
-                exc=exc, started=started, failovers_before=failovers_before,
+            return self._verify_backend_failure(
+                contract=contract, trace=trace, exc=exc, started=started,
+                failovers_before=failovers_before,
             )
         trace.event("routing", **routing)
 
@@ -311,6 +317,7 @@ class Runtime:
                 semantic_verifier_status=semantic["status"],
                 semantic_verifier_score=semantic["score"],
                 semantic_verifier_confidence=semantic["confidence"],
+                semantic_verifier_unavailable=semantic.get("unavailable_code"),
             )
             models.append(
                 {
@@ -410,15 +417,18 @@ class Runtime:
             artifacts.append({"type": "response", "path": response_path})
         return artifacts
 
-    def _backend_failure(
-        self, *, validated, contract, trace, exc, started, failovers_before=0,
-    ) -> dict:
-        """Turn a dead model backend into a FAIL Result Envelope.
+    def _backend_failure_packs(
+        self, *, contract, trace, exc, started, failovers_before,
+    ) -> tuple[str, dict, dict, dict, dict]:
+        """Record a backend outage and persist its packs.
 
         The Trace Pack is still written: it holds every event up to the
         failure, which is what makes the outage diagnosable afterwards. The
         Repro Pack is necessarily thin -- no models ran, so there is nothing
         to reproduce beyond the contract and the hardware.
+
+        Shared by the run and verify paths, which report the same outage in
+        two different result shapes.
         """
         code = getattr(exc, "code", status_codes.OLLAMA_UNREACHABLE)
         trace.event("backend_failure", code=code, error=str(exc)[:300])
@@ -445,6 +455,16 @@ class Runtime:
         pack_paths = repro_trace.write_packs(
             self.storage, self.config, repro, trace_pack
         )
+        return code, metrics, repro, trace_pack, pack_paths
+
+    def _backend_failure(
+        self, *, validated, contract, trace, exc, started, failovers_before=0,
+    ) -> dict:
+        """A backend outage as a FAIL Result Envelope (the `run` shape)."""
+        code, metrics, repro, trace_pack, pack_paths = self._backend_failure_packs(
+            contract=contract, trace=trace, exc=exc, started=started,
+            failovers_before=failovers_before,
+        )
         return self._envelope(
             validated=validated,
             contract=contract,
@@ -458,6 +478,36 @@ class Runtime:
             trace={"id": trace_pack["id"], "path": pack_paths["trace_pack"]},
             metrics=metrics,
         )
+
+    def _verify_backend_failure(
+        self, *, contract, trace, exc, started, failovers_before=0,
+    ) -> dict:
+        """A backend outage in the `verify` shape.
+
+        `verify_envelope` returns a different contract from `run_envelope`
+        (score / defects / verifier / *_pack_ref), so it cannot reuse the run
+        envelope -- a caller reading `result["score"]` would crash.
+        """
+        code, metrics, repro, trace_pack, pack_paths = self._backend_failure_packs(
+            contract=contract, trace=trace, exc=exc, started=started,
+            failovers_before=failovers_before,
+        )
+        return {
+            "task_id": contract["task_id"],
+            "status": FAIL,
+            "code": code,
+            "score": 0.0,
+            "defects": [{"severity": "high", "message": str(exc)}],
+            "schema_errors": [],
+            "verifier": {"backend": "unavailable", "semantic_model": None},
+            "repro_pack_ref": os.path.relpath(
+                pack_paths["repro_pack"], self.storage.root
+            ),
+            "trace_pack_ref": os.path.relpath(
+                pack_paths["trace_pack"], self.storage.root
+            ),
+            "metrics": metrics,
+        }
 
     @staticmethod
     def _message(outcome: dict) -> str:

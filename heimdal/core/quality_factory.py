@@ -227,28 +227,6 @@ def run_quality_factory(
     max_output = contract.get("budget", {}).get("max_output_tokens", 2000)
     models_used: list[dict] = []
 
-    # Brain/planner step (B3/B4 only): a dedicated planning call runs before
-    # the worker drafts, and its plan is prepended to the worker prompt. For
-    # B0-B2, routing["brain_profile"] is None and this is skipped entirely, so
-    # default behaviour and the eval suite are unaffected.
-    if routing.get("brain_profile") and routing.get("brain_model"):
-        objective = contract.get("objective", "")
-        plan_result = brain_backend_inst.generate(
-            f"Produce a short numbered plan to address this task:\n{objective}\n",
-            model=routing["brain_model"],
-            system="You are a concise planner. Output 2-4 numbered steps only.",
-            max_tokens=300,
-            temperature=0.2,
-            structured={"brain_task": "plan", "instruction": objective},
-        )
-        plan_text = (plan_result.text or "").strip()
-        if plan_text:
-            base_prompt = f"# PLAN\n{plan_text}\n\n{base_prompt}"
-            trace.event("brain_plan", brain_model=plan_result.model)
-            models_used.append(
-                {"role": "brain", "model": plan_result.model,
-                 "backend": plan_result.backend}
-            )
 
     def _generate_draft(prompt: str, defects: list[dict], use_backend):
         """One worker generation on a specific backend (thread-safe: no
@@ -282,14 +260,41 @@ def run_quality_factory(
                 semantic_verifier_status=semantic["status"],
                 semantic_verifier_score=semantic["score"],
                 semantic_verifier_confidence=semantic["confidence"],
+                semantic_verifier_unavailable=semantic.get("unavailable_code"),
             )
         trace.event("verify", status=result["status"], score=result["score"], **trace_kw)
         return result
 
     # Route every routed backend's request events into this run's Trace Pack.
+    # Everything that calls a model belongs inside this block: a generation
+    # issued before the sink is attached loses its request and failover
+    # events, so the Trace Pack would disagree with the metrics.
     for routed in routed_backends:
         routed.event_sink = trace.event
     try:
+        # Brain/planner step (B3/B4 only): a dedicated planning call runs before
+        # the worker drafts, and its plan is prepended to the worker prompt. For
+        # B0-B2, routing["brain_profile"] is None and this is skipped entirely, so
+        # default behaviour and the eval suite are unaffected.
+        if routing.get("brain_profile") and routing.get("brain_model"):
+            objective = contract.get("objective", "")
+            plan_result = brain_backend_inst.generate(
+                f"Produce a short numbered plan to address this task:\n{objective}\n",
+                model=routing["brain_model"],
+                system="You are a concise planner. Output 2-4 numbered steps only.",
+                max_tokens=300,
+                temperature=0.2,
+                structured={"brain_task": "plan", "instruction": objective},
+            )
+            plan_text = (plan_result.text or "").strip()
+            if plan_text:
+                base_prompt = f"# PLAN\n{plan_text}\n\n{base_prompt}"
+                trace.event("brain_plan", brain_model=plan_result.model)
+                models_used.append(
+                    {"role": "brain", "model": plan_result.model,
+                     "backend": plan_result.backend}
+                )
+
         # Initial draft; high budgets (B3/B4) take the best of multiple samples.
         best_text = ""
         best_verification = None
